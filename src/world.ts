@@ -55,10 +55,55 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   return { scene, terrain, sun, gatherables };
 }
 
+// ---- forest clearings (poieni) — real ones, by name ----
+// World coords resolved at scatter time from lat/lon.
+const CLEARING_GEOS = [
+  { lat: 45.3460, lon: 25.5215, r: 190 },  // Poiana Stanii Regale
+  { lat: 45.3418, lon: 25.5070, r: 140 },  // Cota 1400 meadow
+  { lat: 45.3555, lon: 25.5375, r: 130 },  // Poiana Foisorului
+  { lat: 45.3604, lon: 25.5421, r: 110 },  // Peles esplanade
+  { lat: 45.3590, lon: 25.5414, r: 80 },   // Pelisor terrace
+  { lat: 45.3559, lon: 25.5479, r: 70 },   // monastery surroundings
+  { lat: 45.3650, lon: 25.5300, r: 120 },  // northern slope poiana
+  { lat: 45.3330, lon: 25.5290, r: 150 },  // southern slope poiana
+  { lat: 45.3560, lon: 25.5660, r: 130 },  // lower Baiu poiana (Cumpatu side)
+];
+
+let clearings: { x: number; z: number; r: number }[] = [];
+
+function inClearing(x: number, z: number): boolean {
+  for (const c of clearings) {
+    const dx = x - c.x, dz = z - c.z;
+    if (dx * dx + dz * dz < c.r * c.r) return true;
+  }
+  return false;
+}
+
+const AMBIENT_MIN_H = 420;        // below this: harvestable gameplay trees
+const RIVER_MEADOW = 45;          // open strip along the Prahova
+const EAST_PASTURE_H = 520;       // Baiu side turns to grass above this
+
+// deterministic forest predicate — used for the minimap tint
+export function forestedAt(x: number, z: number): boolean {
+  const h = terrainHeight(x, z);
+  if (h > TREELINE) return false;
+  if (terrainSlope(x, z) > 1.4) return false;
+  if (inClearing(x, z)) return false;
+  if (Math.abs(x - riverX(z)) < RIVER_MEADOW) return false;
+  if (x > riverX(z) + 150 && h > EAST_PASTURE_H) return false; // Baiu pasture
+  return true;
+}
+
 // ---- trees, rocks, berry bushes: instanced meshes + resource nodes ----
 function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const rng = mulberry32(1883);
   const dummy = new THREE.Object3D();
+
+  clearings = CLEARING_GEOS.map((c) => {
+    const w = lonLatToWorld(c.lon, c.lat);
+    return { x: w.x, z: w.z, r: c.r };
+  });
+  clearings.push({ x: START.camp.x, z: START.camp.z, r: 130 }); // the hamlet's meadow
 
   const clearOf = (x: number, z: number, margin: number): boolean => {
     for (const p of PLOTS) {
@@ -67,29 +112,25 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
     }
     const dx = x - START.camp.x, dz = z - START.camp.z;
     if (dx * dx + dz * dz < (16 + margin) ** 2) return false;
-    if (Math.abs(x - riverX(z)) < 18 + margin) return false;
+    if (Math.abs(x - riverX(z)) < RIVER_MEADOW + margin) return false;
     if (roadDistance(x, z) < 5 + margin) return false;
     return true;
   };
 
-  // --- spruce/fir forest, distributed by real elevation and aspect ---
+  // --- gameplay forest: harvestable trees blanketing the lower valley,
+  // including the future town site (it is 1690 — there is no town yet) ---
   const treeSpots: { x: number; z: number }[] = [];
-  for (let tries = 0; tries < 240000 && treeSpots.length < 13000; tries++) {
+  for (let tries = 0; tries < 500000 && treeSpots.length < 20000; tries++) {
     const x = MAP.minX + 14 + rng() * (MAP.width - 28);
     const z = MAP.minZ + 14 + rng() * (MAP.depth - 28);
     const h = terrainHeight(x, z);
-    if (h > TREELINE) continue; // alpine, no trees
+    if (h >= AMBIENT_MIN_H) continue; // upper forest is the ambient tier
     const slope = terrainSlope(x, z);
-    if (slope > 1.4) continue;  // cliffs
+    if (slope > 1.3) continue;
+    if (inClearing(x, z)) continue;
+    if (x > riverX(z) + 150 && h > EAST_PASTURE_H) continue;
     if (!clearOf(x, z, 4)) continue;
-    // dense conifer forest on the mountainsides, open meadow on the valley
-    // floor, grassy pasture on the Baiu side (east of the river)
-    const eastOfRiver = x > riverX(z) + 120;
-    let density = 0.12 + Math.min(1, h / 220) * 0.75;
-    if (eastOfRiver) density *= 0.3;          // Baiu: hay meadows, scattered clumps
-    if (h < 60) density *= 0.35;              // valley floor
-    if (slope > 0.25) density += 0.15;
-    if (rng() > density) continue;
+    if (rng() > 0.78) continue; // near-solid forest with small natural gaps
     treeSpots.push({ x, z });
   }
   // starter woodlots: groves on the valley floor near the hamlet
@@ -139,6 +180,35 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
     });
   });
   scene.add(trunks, cones1, cones2);
+
+  // --- ambient forest: the mountainsides up to the treeline. Pure scenery —
+  // not harvestable, no shadows, excluded from raycasting for performance. ---
+  const ambientSpots: { x: number; z: number }[] = [];
+  for (let tries = 0; tries < 900000 && ambientSpots.length < 42000; tries++) {
+    const x = MAP.minX + 14 + rng() * (MAP.width - 28);
+    const z = MAP.minZ + 14 + rng() * (MAP.depth - 28);
+    const h = terrainHeight(x, z);
+    if (h < AMBIENT_MIN_H || h > TREELINE) continue;
+    if (terrainSlope(x, z) > 1.45) continue;
+    if (inClearing(x, z)) continue;
+    if (x > riverX(z) + 150 && h > EAST_PASTURE_H) continue; // Baiu pasture
+    if (roadDistance(x, z) < 6) continue;
+    if (rng() > 0.85) continue;
+    ambientSpots.push({ x, z });
+  }
+  const amb1 = new THREE.InstancedMesh(cone1Geo, pine1Mat, ambientSpots.length);
+  const amb2 = new THREE.InstancedMesh(cone2Geo, pine2Mat, ambientSpots.length);
+  amb1.raycast = () => {}; // skip in picking
+  amb2.raycast = () => {};
+  ambientSpots.forEach((s, i) => {
+    dummy.position.set(s.x, terrainHeight(s.x, s.z), s.z);
+    dummy.scale.setScalar(1.3 + rng() * 0.9);
+    dummy.rotation.set(0, rng() * Math.PI * 2, 0);
+    dummy.updateMatrix();
+    amb1.setMatrixAt(i, dummy.matrix);
+    amb2.setMatrixAt(i, dummy.matrix);
+  });
+  scene.add(amb1, amb2);
 
   // --- stone outcrops (real-world locations on the lower slopes) ---
   const rockGeo = new THREE.DodecahedronGeometry(2.4, 0);

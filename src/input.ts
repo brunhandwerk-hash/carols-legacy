@@ -175,8 +175,14 @@ export function initInput(
       }
       setSelection(picked, null);
     } else {
-      // single click: villager > building > clear
-      const hits = raycastAt(e.clientX, e.clientY, world.scene.children);
+      // single click: villager > building > clear (trees aren't selectable,
+      // so skip the instanced forest for speed)
+      const targets: THREE.Object3D[] = [
+        ...G.villagers.map((v) => v.group),
+        ...G.buildings.map((b) => b.group),
+        world.terrain,
+      ];
+      const hits = raycastAt(e.clientX, e.clientY, targets);
       let done = false;
       for (const h of hits) {
         const vil = h.object.userData.villager as Villager | undefined;

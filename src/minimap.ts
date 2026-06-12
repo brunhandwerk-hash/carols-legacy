@@ -2,6 +2,7 @@ import { MAP } from './config';
 import { terrainHeight, terrainSlope, riverX, SNOWLINE } from './terrain';
 import { PLOTS } from './plots';
 import { G } from './state';
+import { forestedAt } from './world';
 
 let W = 210, H = 242; // canvas pixels, set from the map aspect in init
 let base: ImageData | null = null;
@@ -29,7 +30,8 @@ export function initMinimap(onJump: (x: number, z: number) => void): void {
       const h = terrainHeight(x, z);
       const slope = terrainSlope(x, z);
       let r = 130, g = 158, b = 88; // grass
-      if (slope > 0.55) { r = 138; g = 132; b = 120; } // rock
+      if (forestedAt(x, z)) { r = 62; g = 96; b = 60; } // conifer forest
+      if (slope > 0.55 && h > SNOWLINE - 220) { r = 138; g = 132; b = 120; } // high rock
       if (h > SNOWLINE) { r = 228; g = 232; b = 235; } // alpine snow
       const shade = Math.max(0.55, Math.min(1.3, 0.85 + h * 0.0009 + slope * 0.1));
       r *= shade; g *= shade; b *= shade;
