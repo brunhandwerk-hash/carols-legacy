@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Karol's Legacy — Sinaia 1690–1947</title>
+  <style>
+    :root {
+      --panel-bg: rgba(34, 28, 22, 0.88);
+      --panel-edge: #8a6d3b;
+      --ink: #f0e6d2;
+      --accent: #d4a843;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1611; }
+    body { font-family: Georgia, 'Times New Roman', serif; color: var(--ink); user-select: none; }
+    #app { position: fixed; inset: 0; }
+    canvas#game { display: block; width: 100%; height: 100%; }
+
+    .panel {
+      position: absolute;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-edge);
+      border-radius: 6px;
+      padding: 8px 12px;
+      backdrop-filter: blur(2px);
+    }
+
+    #topbar {
+      top: 10px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 22px; align-items: center;
+      font-size: 15px; white-space: nowrap;
+    }
+    #topbar .res { display: flex; gap: 7px; align-items: center; }
+    #topbar .dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); }
+    #topbar .dot.wood { background: #8a5a2b; }
+    #topbar .dot.stone { background: #9a958c; }
+    #topbar .dot.food { background: #d4a843; }
+    #topbar .dot.pop { background: #b05f4a; border-radius: 50%; }
+    #topbar #era-label { color: var(--accent); font-style: italic; margin-left: 8px; }
+
+    #objectives {
+      top: 64px; right: 12px; width: 260px; font-size: 13.5px;
+    }
+    #objectives h3 { color: var(--accent); font-size: 14px; margin-bottom: 6px; font-variant: small-caps; letter-spacing: 1px; }
+    #objectives li { list-style: none; margin: 4px 0; line-height: 1.35; }
+    #objectives li.done { color: #9bc47a; text-decoration: line-through; }
+    #objectives li::before { content: '◆ '; color: var(--accent); }
+    #objectives li.done::before { content: '✔ '; color: #9bc47a; }
+
+    #selpanel {
+      left: 12px; bottom: 12px; min-width: 230px; max-width: 330px; font-size: 14px;
+      display: none;
+    }
+    #selpanel h3 { color: var(--accent); font-size: 15px; margin-bottom: 4px; }
+    #selpanel .sub { font-size: 12.5px; opacity: 0.8; margin-bottom: 6px; }
+    #selpanel .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    button.act {
+      background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
+      border-radius: 4px; padding: 6px 10px; font-family: inherit; font-size: 13px; cursor: pointer;
+    }
+    button.act:hover:not(:disabled) { background: #51422d; }
+    button.act:disabled { opacity: 0.45; cursor: default; }
+
+    #minimap-wrap { right: 12px; bottom: 12px; padding: 6px; }
+    #minimap { display: block; width: 200px; height: 260px; cursor: crosshair; border-radius: 3px; }
+
+    #banner {
+      position: absolute; top: 18%; left: 50%; transform: translateX(-50%);
+      text-align: center; pointer-events: none; opacity: 0; transition: opacity 1.2s;
+      text-shadow: 0 2px 10px rgba(0,0,0,0.85);
+    }
+    #banner .year { font-size: 46px; color: var(--accent); letter-spacing: 4px; }
+    #banner .title { font-size: 26px; margin-top: 4px; }
+    #banner .text { font-size: 16px; font-style: italic; margin-top: 8px; max-width: 560px; opacity: 0.95; }
+
+    #toast {
+      position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+      background: var(--panel-bg); border: 1px solid var(--panel-edge); border-radius: 4px;
+      padding: 6px 14px; font-size: 14px; opacity: 0; transition: opacity 0.4s; pointer-events: none;
+    }
+
+    #selbox {
+      position: absolute; border: 1px solid #ffe9a8; background: rgba(255, 233, 168, 0.12);
+      display: none; pointer-events: none;
+    }
+
+    #intro {
+      position: fixed; inset: 0; background: rgba(12, 10, 7, 0.92); z-index: 10;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+    }
+    #intro .inner { max-width: 640px; padding: 30px; }
+    #intro h1 { font-size: 42px; color: var(--accent); letter-spacing: 3px; margin-bottom: 4px; }
+    #intro h2 { font-size: 18px; font-weight: normal; font-style: italic; opacity: 0.85; margin-bottom: 22px; }
+    #intro p { font-size: 16px; line-height: 1.55; margin-bottom: 14px; text-align: justify; }
+    #intro .controls { font-size: 13.5px; opacity: 0.75; margin: 18px 0; line-height: 1.6; }
+    #intro button { font-size: 17px; padding: 10px 34px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+    <div id="selbox"></div>
+    <div id="topbar" class="panel">
+      <span class="res"><span class="dot wood"></span>Wood <span id="r-wood">0</span></span>
+      <span class="res"><span class="dot stone"></span>Stone <span id="r-stone">0</span></span>
+      <span class="res"><span class="dot food"></span>Food <span id="r-food">0</span></span>
+      <span class="res"><span class="dot pop"></span>Pop <span id="r-pop">0/0</span></span>
+      <span id="era-label"></span>
+    </div>
+    <div id="objectives" class="panel">
+      <h3 id="obj-title">Objectives</h3>
+      <ul id="obj-list"></ul>
+    </div>
+    <div id="selpanel" class="panel">
+      <h3 id="sel-name"></h3>
+      <div class="sub" id="sel-sub"></div>
+      <div class="actions" id="sel-actions"></div>
+    </div>
+    <div id="minimap-wrap" class="panel"><canvas id="minimap" width="200" height="260"></canvas></div>
+    <div id="banner"><div class="year"></div><div class="title"></div><div class="text"></div></div>
+    <div id="toast"></div>
+    <div id="intro">
+      <div class="inner">
+        <h1>KAROL'S LEGACY</h1>
+        <h2>The Chronicle of Sinaia · 1690 – 1947</h2>
+        <p>High in the Prahova Valley, between the cliffs of the Bucegi and the wooded ridge of Baiu,
+           a handful of shepherds and woodsmen live in scattered huts beside a cold mountain river.
+           Boyar Mihail Cantacuzino, returned from a pilgrimage to Mount Sinai, has vowed to raise a
+           monastery here — and around it, in time, a town will grow that kings will call home.</p>
+        <p>Guide this valley through two and a half centuries: raise the monastery, greet the railway,
+           build a king his castle, survive a world war, and write Sinaia's chronicle.</p>
+        <div class="controls">
+          Left-click / drag — select villagers &nbsp;·&nbsp; Right-click — move, gather, build<br/>
+          WASD / arrows / edge — pan &nbsp;·&nbsp; Mouse wheel — zoom &nbsp;·&nbsp; Q / E — rotate camera
+        </div>
+        <button class="act" id="start-btn">Begin · Anno 1690</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
