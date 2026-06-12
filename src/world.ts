@@ -28,7 +28,7 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   registerFlatSpot(START.camp.x, START.camp.z, 14);
 
   scene.background = new THREE.Color(PALETTE.sky);
-  scene.fog = new THREE.Fog(PALETTE.fog, 260, 900);
+  scene.fog = new THREE.Fog(PALETTE.fog, 500, 2600);
 
   const hemi = new THREE.HemisphereLight(0xcfe4f0, 0x6a7a52, 0.85);
   scene.add(hemi);
@@ -116,20 +116,36 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
 
   // --- pines ---
   const treeSpots: { x: number; z: number }[] = [];
-  for (let tries = 0; tries < 26000 && treeSpots.length < 3400; tries++) {
+  for (let tries = 0; tries < 100000 && treeSpots.length < 9500; tries++) {
     const x = MAP.minX + 6 + rng() * (MAP.width - 12);
     const z = MAP.minZ + 6 + rng() * (MAP.depth - 12);
     if (!clearOf(x, z, 4)) continue;
     if (terrainSlope(x, z) > 1.35) continue;
-    // density: heavy on the slopes and the north, light on the valley floor
+    if (terrainHeight(x, z) > 220) continue; // above the treeline
+    // density: solid forest on the Bucegi side and the north,
+    // open meadow on the valley floor, grassy pasture on the Baiu side (east)
     const slopeBias = Math.min(1, terrainSlope(x, z) / 0.5);
-    const westBias = x < -40 ? 0.75 : 0;
-    const eastBias = x > 135 ? 0.6 : 0;
-    const northBias = z < -60 ? 0.35 : 0;
-    const floorPenalty = (x > -40 && x < 135 && z > -60) ? -0.55 : 0;
-    const density = 0.18 + slopeBias * 0.4 + westBias + eastBias + northBias + floorPenalty;
+    const westBias = x < -150 ? 0.8 : 0;
+    const northBias = z < -150 ? 0.3 : 0;
+    const floorPenalty = (x > -150 && x < 260 && z > -150) ? -0.55 : 0;
+    const eastPasture = x > 280 ? -0.75 : 0; // Baiu side: scattered clumps only
+    const density = 0.2 + slopeBias * 0.4 + westBias + northBias + floorPenalty + eastPasture;
     if (rng() > density) continue;
     treeSpots.push({ x, z });
+  }
+  // starter woodlots: groves on the valley floor near the hamlet
+  const groves = [
+    { x: 115, z: 195, r: 35, count: 40 },
+    { x: 10, z: 285, r: 30, count: 30 },
+    { x: 40, z: 150, r: 25, count: 22 },
+  ];
+  for (const g of groves) {
+    for (let i = 0; i < g.count; i++) {
+      const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * g.r;
+      const x = g.x + Math.cos(a) * d, z = g.z + Math.sin(a) * d;
+      if (!clearOf(x, z, 3) || !inMap(x, z)) continue;
+      treeSpots.push({ x, z });
+    }
   }
 
   const trunkGeo = new THREE.CylinderGeometry(0.45, 0.65, 3.2, 5);
@@ -170,10 +186,11 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x9a958c });
   const rockSpots: { x: number; z: number }[] = [];
   const rockClusters = [
-    { x: -130, z: 35, r: 26, count: 16 },
-    { x: -105, z: -25, r: 18, count: 8 },
-    { x: 55, z: -210, r: 24, count: 10 },
-    { x: 170, z: -90, r: 22, count: 8 },
+    { x: -260, z: 80, r: 45, count: 22 },   // quarry slope SW of town
+    { x: -210, z: -70, r: 30, count: 12 },
+    { x: 120, z: -480, r: 40, count: 14 },  // upper valley outcrops
+    { x: 390, z: -200, r: 38, count: 12 },  // Baiu side
+    { x: -150, z: 380, r: 36, count: 12 },  // southern slopes
   ];
   for (const c of rockClusters) {
     for (let i = 0; i < c.count; i++) {
@@ -200,10 +217,12 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const bushMat = new THREE.MeshLambertMaterial({ color: 0x4f7a38 });
   const bushSpots: { x: number; z: number }[] = [];
   const bushClusters = [
-    { x: 55, z: 140, r: 20, count: 9 },
-    { x: 5, z: 170, r: 18, count: 7 },
-    { x: 60, z: -45, r: 16, count: 6 },
-    { x: -10, z: 45, r: 14, count: 5 },
+    { x: 115, z: 280, r: 30, count: 11 },  // near the hamlet
+    { x: 20, z: 340, r: 26, count: 8 },
+    { x: 130, z: 60, r: 24, count: 7 },
+    { x: -30, z: 100, r: 22, count: 6 },
+    { x: 230, z: -280, r: 28, count: 8 },  // upriver banks
+    { x: 320, z: 180, r: 30, count: 8 },   // Baiu pastures
   ];
   for (const c of bushClusters) {
     for (let i = 0; i < c.count; i++) {

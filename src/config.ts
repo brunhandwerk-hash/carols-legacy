@@ -1,8 +1,8 @@
 // Map coordinates: +x = east, +z = south, y = up. Units ~ metres (stylized).
 export const MAP = {
-  minX: -260, maxX: 260,
-  minZ: -340, maxZ: 340,
-  width: 520, depth: 680,
+  minX: -575, maxX: 575,
+  minZ: -750, maxZ: 750,
+  width: 1150, depth: 1500,
 };
 
 export const PALETTE = {
@@ -29,5 +29,5 @@ export const START = {
   food: 80,
   villagers: 4,
   // hamlet on the valley floor, south of the future park, west bank of the Prahova
-  camp: { x: 30, z: 105 },
+  camp: { x: 70, z: 230 },
 };

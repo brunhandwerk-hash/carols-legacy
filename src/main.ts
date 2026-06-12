@@ -17,7 +17,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 2500);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 6000);
 
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -69,6 +69,13 @@ let panelTimer = 0;
 
 function frame(now: number): void {
   requestAnimationFrame(frame);
+  tick(now);
+}
+
+// rAF is suspended in hidden tabs (incl. headless previews) — keep ticking there
+setInterval(() => { if (document.hidden) tick(performance.now()); }, 100);
+
+function tick(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   rig.update(dt);
@@ -97,5 +104,17 @@ function frame(now: number): void {
 updateHud();
 requestAnimationFrame(frame);
 
-// debug / test hook
-(window as unknown as Record<string, unknown>).G = G;
+// debug / test hooks
+const dbg = window as unknown as Record<string, unknown>;
+dbg.G = G;
+dbg.rig = rig;
+import('./terrain').then((t) => { dbg.terrain = t; });
+dbg.__render = () => { renderer.render(scene, camera); return renderer.info.render.calls; };
+dbg.__shot = (w = 480) => {
+  renderer.render(scene, camera);
+  const c = document.createElement('canvas');
+  const h = Math.round(w * canvas.height / canvas.width);
+  c.width = w; c.height = h;
+  c.getContext('2d')!.drawImage(canvas, 0, 0, w, h);
+  return c.toDataURL('image/jpeg', 0.75);
+};

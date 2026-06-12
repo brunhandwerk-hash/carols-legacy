@@ -24,6 +24,7 @@ export function initMinimap(onJump: (x: number, z: number) => void): void {
       const slope = terrainSlope(x, z);
       let r = 130, g = 158, b = 88; // grass
       if (slope > 0.6) { r = 138; g = 132; b = 120; } // rock
+      if (h > 230) { r = 225; g = 230; b = 233; }     // alpine snow
       const shade = Math.max(0.55, Math.min(1.25, 0.9 + h * 0.012));
       r *= shade; g *= shade; b *= shade;
       if (Math.abs(x - riverX(z)) < 7) { r = 93; g = 143; b = 168; }

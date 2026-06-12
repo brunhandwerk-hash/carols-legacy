@@ -14,15 +14,19 @@ export interface CameraRig {
   jumpTo: (x: number, z: number) => void;
 }
 
+const MIN_PITCH = 0.3;   // near-horizon, Google-Maps-style tilt
+const MAX_PITCH = 1.45;  // almost top-down
+
 export function initInput(
   canvas: HTMLCanvasElement,
   camera: THREE.PerspectiveCamera,
   world: WorldRefs,
 ): CameraRig {
   const rig = {
-    target: { x: 18, z: 75 }, // between hamlet and monastery knoll
-    yaw: 2.6,                  // looking north-west, up the valley
-    dist: 130,
+    target: { x: 40, z: 190 }, // between hamlet and monastery knoll
+    yaw: 2.6,                   // looking north-west, up the valley
+    dist: 220,
+    pitch: 0.95,
   };
 
   const keys = new Set<string>();
@@ -121,19 +125,23 @@ export function initInput(
 
   canvas.addEventListener('pointerdown', (e) => {
     if (e.button === 0) {
+      // Ctrl/Alt + left-drag orbits the camera (laptops without a middle button)
+      if (e.ctrlKey || e.altKey) { orbit = { x: e.clientX, y: e.clientY }; return; }
       if (ghost) { placeGhost(); return; }
       dragStart = { x: e.clientX, y: e.clientY };
       dragging = false;
     } else if (e.button === 1) {
-      mmb = { x: e.clientX, y: e.clientY };
+      e.preventDefault();
+      orbit = { x: e.clientX, y: e.clientY };
     }
   });
 
   window.addEventListener('pointermove', (e) => {
     pointerX = e.clientX; pointerY = e.clientY;
-    if (mmb) {
-      rig.yaw -= (e.clientX - mmb.x) * 0.005;
-      mmb = { x: e.clientX, y: e.clientY };
+    if (orbit) {
+      rig.yaw -= (e.clientX - orbit.x) * 0.005;
+      rig.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, rig.pitch + (e.clientY - orbit.y) * 0.004));
+      orbit = { x: e.clientX, y: e.clientY };
     }
     if (dragStart) {
       const dx = e.clientX - dragStart.x, dy = e.clientY - dragStart.y;
@@ -147,7 +155,7 @@ export function initInput(
   });
 
   window.addEventListener('pointerup', (e) => {
-    if (e.button === 1) { mmb = null; return; }
+    if (orbit) { orbit = null; return; }
     if (e.button !== 0 || !dragStart) return;
     selbox.style.display = 'none';
     if (dragging) {
@@ -224,11 +232,21 @@ export function initInput(
   });
 
   // ---- camera ----
-  let mmb: { x: number; y: number } | null = null;
+  let orbit: { x: number; y: number } | null = null;
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    rig.dist = Math.min(240, Math.max(35, rig.dist * (e.deltaY > 0 ? 1.12 : 0.89)));
+    const oldDist = rig.dist;
+    rig.dist = Math.min(750, Math.max(40, rig.dist * (e.deltaY > 0 ? 1.13 : 0.885)));
+    // Google-Maps-style: zoom toward the point under the cursor
+    if (rig.dist < oldDist) {
+      const p = groundPoint(e.clientX, e.clientY);
+      if (p) {
+        const f = 1 - rig.dist / oldDist;
+        rig.target.x += (p.x - rig.target.x) * f;
+        rig.target.z += (p.z - rig.target.z) * f;
+      }
+    }
   }, { passive: false });
 
   const EDGE = 14;
@@ -251,18 +269,17 @@ export function initInput(
       const cos = Math.cos(rig.yaw), sin = Math.sin(rig.yaw);
       rig.target.x += (mx * cos - mz * sin) * panSpeed;
       rig.target.z += (-mx * sin - mz * cos) * panSpeed;
-      rig.target.x = Math.min(250, Math.max(-250, rig.target.x));
-      rig.target.z = Math.min(330, Math.max(-330, rig.target.z));
+      rig.target.x = Math.min(560, Math.max(-560, rig.target.x));
+      rig.target.z = Math.min(735, Math.max(-735, rig.target.z));
     }
     const ty = terrainHeight(rig.target.x, rig.target.z);
-    const pitch = 0.62 + (rig.dist / 240) * 0.35; // steeper when zoomed out
-    const cy = Math.sin(pitch) * rig.dist;
-    const ch = Math.cos(pitch) * rig.dist;
-    camera.position.set(
-      rig.target.x + Math.sin(rig.yaw) * ch,
-      ty + cy,
-      rig.target.z + Math.cos(rig.yaw) * ch,
-    );
+    const cy = Math.sin(rig.pitch) * rig.dist;
+    const ch = Math.cos(rig.pitch) * rig.dist;
+    const cx = rig.target.x + Math.sin(rig.yaw) * ch;
+    const cz = rig.target.z + Math.cos(rig.yaw) * ch;
+    // keep the camera above the terrain (the Bucegi wall is tall now)
+    const groundY = terrainHeight(Math.min(560, Math.max(-560, cx)), Math.min(735, Math.max(-735, cz)));
+    camera.position.set(cx, Math.max(ty + cy, groundY + 12), cz);
     camera.lookAt(rig.target.x, ty, rig.target.z);
     // sun + shadow frustum follow the camera target
     world.sun.position.set(rig.target.x - 180, 260, rig.target.z - 120);

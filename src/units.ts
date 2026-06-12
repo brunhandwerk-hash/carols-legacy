@@ -32,7 +32,7 @@ export class Villager {
   task: Task = { kind: 'idle' };
   carry = 0;
   carryKind: 'wood' | 'stone' | 'food' = 'wood';
-  speed = 10;
+  speed = 13;
   private workTimer = 0;
   private bobPhase = Math.random() * Math.PI * 2;
 
