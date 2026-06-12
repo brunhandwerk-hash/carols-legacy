@@ -1,8 +1,9 @@
-// Map coordinates: +x = east, +z = south, y = up. Units ~ metres (stylized).
+// Map coordinates: +x = east, +z = south, y = up. Units = metres.
+// Real extents are set from the DEM metadata in loadDem() — these are placeholders.
 export const MAP = {
-  minX: -575, maxX: 575,
-  minZ: -750, maxZ: 750,
-  width: 1150, depth: 1500,
+  minX: -3129, maxX: 3129,
+  minZ: -3612, maxZ: 3612,
+  width: 6258, depth: 7224,
 };
 
 export const PALETTE = {
@@ -28,6 +29,6 @@ export const START = {
   stone: 0,
   food: 80,
   villagers: 4,
-  // hamlet on the valley floor, south of the future park, west bank of the Prahova
-  camp: { x: 70, z: 230 },
+  // hamlet position is set from CAMP_GEO (plots.ts) once the DEM is loaded
+  camp: { x: 0, z: 0 },
 };

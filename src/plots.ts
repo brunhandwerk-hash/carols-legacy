@@ -1,34 +1,48 @@
-// Fixed landmark sites, laid out to match the real geography of Sinaia:
-// the monastery on its knoll; the Peles complex strung along the Peles creek
-// road climbing north-west; park, casino, hotels and station on the valley
-// floor; interwar villas on the southern slopes.
+// Fixed landmark sites at their real coordinates in Sinaia. World x/z are
+// computed from lat/lon once the DEM is loaded (initPlots).
+import { lonLatToWorld } from './terrain';
+
 export interface Plot {
   key: string;
   name: string;
-  x: number; z: number;
-  r: number;          // flattened radius
-  era: number;        // era index in which it becomes buildable
+  lat: number; lon: number;
+  x: number; z: number;   // filled by initPlots()
+  r: number;              // flattened radius
+  era: number;            // era index in which it becomes buildable
 }
 
+const def = (key: string, name: string, lat: number, lon: number, r: number, era: number): Plot =>
+  ({ key, name, lat, lon, x: 0, z: 0, r, era });
+
 export const PLOTS: Plot[] = [
-  { key: 'monastery',  name: 'Sinaia Monastery',      x: -90,  z: -120, r: 22, era: 0 },
-  { key: 'oldinn',     name: 'Pilgrims’ Inn',    x: -52,  z: -75,  r: 9,  era: 1 },
-  { key: 'economat',   name: 'Economat',              x: -200, z: -260, r: 10, era: 2 },
-  { key: 'cavalerilor',name: 'Casa Cavalerilor',      x: -240, z: -300, r: 9,  era: 2 },
-  { key: 'guard',      name: 'Corpul de Gardă',  x: -275, z: -340, r: 8,  era: 2 },
-  { key: 'foisor',     name: 'Foișor Lodge',     x: -290, z: -545, r: 11, era: 2 },
-  { key: 'peles',      name: 'Peleș Castle',     x: -400, z: -430, r: 20, era: 2 },
-  { key: 'station',    name: 'Royal Railway Station', x: 170,  z: 90,   r: 12, era: 2 },
-  { key: 'furnica',    name: 'Hotel Furnica',         x: -160, z: -200, r: 11, era: 3 },
-  { key: 'pelisor',    name: 'Pelișor Castle',   x: -350, z: -470, r: 12, era: 3 },
-  { key: 'caraiman',   name: 'Hotel Caraiman',        x: 30,   z: 120,  r: 11, era: 3 },
-  { key: 'palace',     name: 'Hotel Palace',          x: 40,   z: 40,   r: 11, era: 3 },
-  { key: 'casino',     name: 'Sinaia Casino',         x: 75,   z: 95,   r: 13, era: 3 },
-  { key: 'townhall',   name: 'Town Hall',             x: -10,  z: 170,  r: 9,  era: 3 },
-  { key: 'villa1',     name: 'Villa Luminiș',    x: 290,  z: -100, r: 8,  era: 5 },
-  { key: 'villa2',     name: 'Interwar Villa',        x: -60,  z: 280,  r: 8,  era: 5 },
-  { key: 'villa3',     name: 'Interwar Villa',        x: 40,   z: 420,  r: 8,  era: 5 },
+  def('monastery',   'Sinaia Monastery',      45.3559, 25.5479, 22, 0),
+  def('oldinn',      'Pilgrims’ Inn',    45.3548, 25.5492, 9,  1),
+  def('economat',    'Economat',              45.3590, 25.5450, 10, 2),
+  def('cavalerilor', 'Casa Cavalerilor',      45.3596, 25.5443, 9,  2),
+  def('guard',       'Corpul de Gardă',  45.3601, 25.5436, 8,  2),
+  def('foisor',      'Foișor Lodge',     45.3555, 25.5375, 11, 2),
+  def('peles',       'Peleș Castle',     45.3604, 25.5421, 20, 2),
+  def('station',     'Royal Railway Station', 45.3497, 25.5506, 12, 2),
+  def('furnica',     'Hotel Furnica',         45.3548, 25.5458, 11, 3),
+  def('pelisor',     'Pelișor Castle',   45.3590, 25.5414, 12, 3),
+  def('caraiman',    'Hotel Caraiman',        45.3516, 25.5491, 11, 3),
+  def('palace',      'Hotel Palace',          45.3527, 25.5484, 11, 3),
+  def('casino',      'Sinaia Casino',         45.3522, 25.5478, 13, 3),
+  def('townhall',    'Town Hall',             45.3504, 25.5483, 9,  3),
+  def('villa1',      'Villa Luminiș',    45.3585, 25.5570, 8,  5),
+  def('villa2',      'Interwar Villa',        45.3460, 25.5520, 8,  5),
+  def('villa3',      'Interwar Villa',        45.3430, 25.5535, 8,  5),
 ];
+
+// the starting hamlet: valley floor by the Prahova, south of the future town
+export const CAMP_GEO = { lat: 45.3455, lon: 25.5525 };
+
+export function initPlots(): void {
+  for (const p of PLOTS) {
+    const w = lonLatToWorld(p.lon, p.lat);
+    p.x = w.x; p.z = w.z;
+  }
+}
 
 export function plotByKey(key: string): Plot {
   const p = PLOTS.find((p) => p.key === key);

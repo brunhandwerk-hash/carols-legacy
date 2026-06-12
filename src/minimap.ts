@@ -1,9 +1,9 @@
 import { MAP } from './config';
-import { terrainHeight, terrainSlope, riverX } from './terrain';
+import { terrainHeight, terrainSlope, riverX, SNOWLINE } from './terrain';
 import { PLOTS } from './plots';
 import { G } from './state';
 
-const W = 200, H = 260;
+let W = 210, H = 242; // canvas pixels, set from the map aspect in init
 let base: ImageData | null = null;
 let ctx: CanvasRenderingContext2D;
 
@@ -14,8 +14,14 @@ const toWorldZ = (py: number): number => MAP.minZ + (py / H) * MAP.depth;
 
 export function initMinimap(onJump: (x: number, z: number) => void): void {
   const canvas = document.getElementById('minimap') as HTMLCanvasElement;
+  W = 210;
+  H = Math.round(W * (MAP.depth / MAP.width));
+  canvas.width = W;
+  canvas.height = H;
+  canvas.style.width = `${W}px`;
+  canvas.style.height = `${H}px`;
   ctx = canvas.getContext('2d')!;
-  // pre-render terrain colors
+  // pre-render terrain colors from the real DEM
   base = ctx.createImageData(W, H);
   for (let py = 0; py < H; py++) {
     for (let px = 0; px < W; px++) {
@@ -23,11 +29,11 @@ export function initMinimap(onJump: (x: number, z: number) => void): void {
       const h = terrainHeight(x, z);
       const slope = terrainSlope(x, z);
       let r = 130, g = 158, b = 88; // grass
-      if (slope > 0.6) { r = 138; g = 132; b = 120; } // rock
-      if (h > 230) { r = 225; g = 230; b = 233; }     // alpine snow
-      const shade = Math.max(0.55, Math.min(1.25, 0.9 + h * 0.012));
+      if (slope > 0.55) { r = 138; g = 132; b = 120; } // rock
+      if (h > SNOWLINE) { r = 228; g = 232; b = 235; } // alpine snow
+      const shade = Math.max(0.55, Math.min(1.3, 0.85 + h * 0.0009 + slope * 0.1));
       r *= shade; g *= shade; b *= shade;
-      if (Math.abs(x - riverX(z)) < 7) { r = 93; g = 143; b = 168; }
+      if (Math.abs(x - riverX(z)) < 18) { r = 93; g = 143; b = 168; }
       const i = (py * W + px) * 4;
       base.data[i] = r; base.data[i + 1] = g; base.data[i + 2] = b; base.data[i + 3] = 255;
     }
@@ -76,7 +82,7 @@ export function drawMinimap(camTarget: { x: number; z: number }, camYaw: number,
   ctx.save();
   ctx.translate(toPx(camTarget.x), toPy(camTarget.z));
   ctx.rotate(-camYaw);
-  const s = (viewSpan / MAP.width) * W;
+  const s = Math.max(6, (viewSpan / MAP.width) * W);
   ctx.strokeRect(-s / 2, -s / 2.6, s, s / 1.3);
   ctx.restore();
 }

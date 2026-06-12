@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MAP } from './config';
 import { terrainHeight, terrainSlope, inRiver, inMap } from './terrain';
 import { G, canAfford, pay } from './state';
 import { Building, DEFS } from './buildings';
@@ -237,7 +238,7 @@ export function initInput(
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const oldDist = rig.dist;
-    rig.dist = Math.min(750, Math.max(40, rig.dist * (e.deltaY > 0 ? 1.13 : 0.885)));
+    rig.dist = Math.min(3400, Math.max(40, rig.dist * (e.deltaY > 0 ? 1.13 : 0.885)));
     // Google-Maps-style: zoom toward the point under the cursor
     if (rig.dist < oldDist) {
       const p = groundPoint(e.clientX, e.clientY);
@@ -269,16 +270,19 @@ export function initInput(
       const cos = Math.cos(rig.yaw), sin = Math.sin(rig.yaw);
       rig.target.x += (mx * cos - mz * sin) * panSpeed;
       rig.target.z += (-mx * sin - mz * cos) * panSpeed;
-      rig.target.x = Math.min(560, Math.max(-560, rig.target.x));
-      rig.target.z = Math.min(735, Math.max(-735, rig.target.z));
+      rig.target.x = Math.min(MAP.maxX - 30, Math.max(MAP.minX + 30, rig.target.x));
+      rig.target.z = Math.min(MAP.maxZ - 30, Math.max(MAP.minZ + 30, rig.target.z));
     }
     const ty = terrainHeight(rig.target.x, rig.target.z);
     const cy = Math.sin(rig.pitch) * rig.dist;
     const ch = Math.cos(rig.pitch) * rig.dist;
     const cx = rig.target.x + Math.sin(rig.yaw) * ch;
     const cz = rig.target.z + Math.cos(rig.yaw) * ch;
-    // keep the camera above the terrain (the Bucegi wall is tall now)
-    const groundY = terrainHeight(Math.min(560, Math.max(-560, cx)), Math.min(735, Math.max(-735, cz)));
+    // keep the camera above the terrain (the Bucegi wall is tall)
+    const groundY = terrainHeight(
+      Math.min(MAP.maxX, Math.max(MAP.minX, cx)),
+      Math.min(MAP.maxZ, Math.max(MAP.minZ, cz)),
+    );
     camera.position.set(cx, Math.max(ty + cy, groundY + 12), cz);
     camera.lookAt(rig.target.x, ty, rig.target.z);
     // sun + shadow frustum follow the camera target

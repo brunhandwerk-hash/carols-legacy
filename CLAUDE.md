@@ -13,11 +13,11 @@ Browser RTS about Sinaia, Romania (1690–1947): the town grows from forest haml
 - UI language: English.
 
 ## Architecture
-- `src/terrain.ts` — analytic heightfield (no heightmap asset); `terrainHeight(x,z)` is the single source of truth for elevation; plots are flattened via `registerFlatSpot` *before* the mesh is built.
+- `src/terrain.ts` — terrain from the **real Sinaia DEM** (`public/dem.bin` + `dem.json`, baked by `node scripts/fetch-dem.mjs` from AWS terrarium tiles, bbox 45.32–45.385N / 25.50–25.58E, 1 unit = 1 m, heights relative to 745 m a.s.l.). `loadDem()` must complete before anything samples terrain (async `boot()` in main.ts). `terrainHeight(x,z)` is the single source of truth; plots are flattened via `registerFlatSpot` *before* the mesh is built; the Prahova course is auto-traced along the DEM's valley floor. Landmarks are georeferenced lat/lon in `src/plots.ts` (`initPlots()` converts to world coords).
 - `src/world.ts` — scene, lights, backdrop peaks, instanced trees/rocks/bushes; each instance is a `ResourceNode` in `G.nodes`.
 - `src/state.ts` — global mutable state `G` (resources, villagers, buildings, era). Exposed as `window.G` for debugging/smoke tests.
 - `src/buildings.ts` — `BuildingDef` registry + procedural mesh builders; phases planned → site → done.
 - `src/units.ts` — villager task state machine (idle/move/gather/build).
 - `src/eras.ts` — era objectives & progression; spawns 'planned' signposts per era.
 - `src/input.ts` — RTS camera, click/box selection, right-click commands, ghost placement.
-- Coordinates: +x east, +z south; map ~520×680 units; monastery knoll near (-45,-35), hamlet (30,105), Peleș clearing (-198,-228).
+- Coordinates: +x east, +z south, metres; map 6258×7224 m centred on the bbox. Don't hardcode world positions — derive them from lat/lon via `lonLatToWorld`.

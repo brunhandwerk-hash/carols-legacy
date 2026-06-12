@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MAP, PALETTE, START } from './config';
-import { terrainHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRiverMesh, registerFlatSpot, roadDistance } from './terrain';
+import { terrainHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRiverMesh, registerFlatSpot, roadDistance, lonLatToWorld, TREELINE } from './terrain';
 import { PLOTS } from './plots';
 import { G, ResourceNode } from './state';
 
@@ -28,18 +28,18 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   registerFlatSpot(START.camp.x, START.camp.z, 14);
 
   scene.background = new THREE.Color(PALETTE.sky);
-  scene.fog = new THREE.Fog(PALETTE.fog, 500, 2600);
+  scene.fog = new THREE.Fog(PALETTE.fog, 900, 9000);
 
   const hemi = new THREE.HemisphereLight(0xcfe4f0, 0x6a7a52, 0.85);
   scene.add(hemi);
 
   const sun = new THREE.DirectionalLight(PALETTE.sun, 1.9);
-  sun.position.set(-180, 260, -120);
+  sun.position.set(-180, 600, -120);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 50;
-  sun.shadow.camera.far = 900;
-  const sc = 240;
+  sun.shadow.camera.far = 2400;
+  const sc = 280;
   sun.shadow.camera.left = -sc; sun.shadow.camera.right = sc;
   sun.shadow.camera.top = sc; sun.shadow.camera.bottom = -sc;
   sun.shadow.bias = -0.0008;
@@ -50,51 +50,9 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   scene.add(terrain);
   scene.add(buildRiverMesh());
 
-  buildPeaks(scene);
   const gatherables = scatterNature(scene);
 
   return { scene, terrain, sun, gatherables };
-}
-
-// ---- backdrop mountains beyond the playable map ----
-function buildPeaks(scene: THREE.Scene): void {
-  const rng = mulberry32(7);
-  const rockMat = new THREE.MeshLambertMaterial({ color: 0x7e8089 });
-  const snowMat = new THREE.MeshLambertMaterial({ color: PALETTE.snow });
-  const forestMat = new THREE.MeshLambertMaterial({ color: 0x4b6444 });
-
-  const addPeak = (x: number, z: number, h: number, r: number, snowy: boolean) => {
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7, 1), snowy ? rockMat : forestMat);
-    cone.position.set(x, terrainHeightSafe(x, z) + h / 2 - 8, z);
-    cone.rotation.y = rng() * Math.PI;
-    scene.add(cone);
-    if (snowy) {
-      const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 0.42, h * 0.34, 7, 1), snowMat);
-      cap.position.set(x, cone.position.y + h * 0.36, z);
-      cap.rotation.y = cone.rotation.y;
-      scene.add(cap);
-    }
-  };
-  // Bucegi wall to the west — tall, craggy, snow-capped
-  for (let i = 0; i < 9; i++) {
-    const z = MAP.minZ - 60 + i * 100 + rng() * 50;
-    addPeak(MAP.minX - 120 - rng() * 130, z, 240 + rng() * 160, 130 + rng() * 70, true);
-  }
-  // Baiu ridge to the east — lower, rounded, forested
-  for (let i = 0; i < 8; i++) {
-    const z = MAP.minZ - 40 + i * 105 + rng() * 60;
-    addPeak(MAP.maxX + 110 + rng() * 110, z, 150 + rng() * 80, 120 + rng() * 60, rng() > 0.7);
-  }
-  // northern head of the valley
-  for (let i = 0; i < 4; i++) {
-    addPeak(MAP.minX + 80 + i * 120 + rng() * 60, MAP.minZ - 160 - rng() * 80, 200 + rng() * 120, 120 + rng() * 60, true);
-  }
-}
-
-function terrainHeightSafe(x: number, z: number): number {
-  const cx = Math.min(MAP.maxX, Math.max(MAP.minX, x));
-  const cz = Math.min(MAP.maxZ, Math.max(MAP.minZ, z));
-  return terrainHeight(cx, cz);
 }
 
 // ---- trees, rocks, berry bushes: instanced meshes + resource nodes ----
@@ -109,35 +67,36 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
     }
     const dx = x - START.camp.x, dz = z - START.camp.z;
     if (dx * dx + dz * dz < (16 + margin) ** 2) return false;
-    if (Math.abs(x - riverX(z)) < 10 + margin) return false;
-    if (roadDistance(x, z) < 4 + margin) return false;
+    if (Math.abs(x - riverX(z)) < 18 + margin) return false;
+    if (roadDistance(x, z) < 5 + margin) return false;
     return true;
   };
 
-  // --- pines ---
+  // --- spruce/fir forest, distributed by real elevation and aspect ---
   const treeSpots: { x: number; z: number }[] = [];
-  for (let tries = 0; tries < 100000 && treeSpots.length < 9500; tries++) {
-    const x = MAP.minX + 6 + rng() * (MAP.width - 12);
-    const z = MAP.minZ + 6 + rng() * (MAP.depth - 12);
+  for (let tries = 0; tries < 240000 && treeSpots.length < 13000; tries++) {
+    const x = MAP.minX + 14 + rng() * (MAP.width - 28);
+    const z = MAP.minZ + 14 + rng() * (MAP.depth - 28);
+    const h = terrainHeight(x, z);
+    if (h > TREELINE) continue; // alpine, no trees
+    const slope = terrainSlope(x, z);
+    if (slope > 1.4) continue;  // cliffs
     if (!clearOf(x, z, 4)) continue;
-    if (terrainSlope(x, z) > 1.35) continue;
-    if (terrainHeight(x, z) > 220) continue; // above the treeline
-    // density: solid forest on the Bucegi side and the north,
-    // open meadow on the valley floor, grassy pasture on the Baiu side (east)
-    const slopeBias = Math.min(1, terrainSlope(x, z) / 0.5);
-    const westBias = x < -150 ? 0.8 : 0;
-    const northBias = z < -150 ? 0.3 : 0;
-    const floorPenalty = (x > -150 && x < 260 && z > -150) ? -0.55 : 0;
-    const eastPasture = x > 280 ? -0.75 : 0; // Baiu side: scattered clumps only
-    const density = 0.2 + slopeBias * 0.4 + westBias + northBias + floorPenalty + eastPasture;
+    // dense conifer forest on the mountainsides, open meadow on the valley
+    // floor, grassy pasture on the Baiu side (east of the river)
+    const eastOfRiver = x > riverX(z) + 120;
+    let density = 0.12 + Math.min(1, h / 220) * 0.75;
+    if (eastOfRiver) density *= 0.3;          // Baiu: hay meadows, scattered clumps
+    if (h < 60) density *= 0.35;              // valley floor
+    if (slope > 0.25) density += 0.15;
     if (rng() > density) continue;
     treeSpots.push({ x, z });
   }
   // starter woodlots: groves on the valley floor near the hamlet
   const groves = [
-    { x: 115, z: 195, r: 35, count: 40 },
-    { x: 10, z: 285, r: 30, count: 30 },
-    { x: 40, z: 150, r: 25, count: 22 },
+    { x: START.camp.x + 60, z: START.camp.z - 40, r: 35, count: 40 },
+    { x: START.camp.x - 55, z: START.camp.z + 50, r: 30, count: 30 },
+    { x: START.camp.x - 20, z: START.camp.z - 85, r: 25, count: 22 },
   ];
   for (const g of groves) {
     for (let i = 0; i < g.count; i++) {
@@ -166,7 +125,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
 
   treeSpots.forEach((s, i) => {
     const y = terrainHeight(s.x, s.z);
-    const sc = 0.75 + rng() * 0.6;
+    const sc = 0.85 + rng() * 0.8;
     dummy.position.set(s.x, y, s.z);
     dummy.scale.setScalar(sc);
     dummy.rotation.set(0, rng() * Math.PI * 2, 0);
@@ -181,22 +140,24 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   });
   scene.add(trunks, cones1, cones2);
 
-  // --- stone outcrops: a quarry slope west of town and scatter in the north ---
+  // --- stone outcrops (real-world locations on the lower slopes) ---
   const rockGeo = new THREE.DodecahedronGeometry(2.4, 0);
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x9a958c });
   const rockSpots: { x: number; z: number }[] = [];
-  const rockClusters = [
-    { x: -260, z: 80, r: 45, count: 22 },   // quarry slope SW of town
-    { x: -210, z: -70, r: 30, count: 12 },
-    { x: 120, z: -480, r: 40, count: 14 },  // upper valley outcrops
-    { x: 390, z: -200, r: 38, count: 12 },  // Baiu side
-    { x: -150, z: 380, r: 36, count: 12 },  // southern slopes
+  const rockGeos = [
+    { lat: 45.3500, lon: 25.5390, r: 60, count: 22 },  // quarry slope west of town
+    { lat: 45.3620, lon: 25.5520, r: 45, count: 14 },  // upper valley outcrops
+    { lat: 45.3525, lon: 25.5640, r: 50, count: 12 },  // Baiu side
+    { lat: 45.3395, lon: 25.5455, r: 50, count: 14 },  // southern slopes
+    { lat: 45.3440, lon: 25.5495, r: 40, count: 12 },  // riverside boulders near the hamlet
   ];
-  for (const c of rockClusters) {
+  for (const c of rockGeos) {
+    const w = lonLatToWorld(c.lon, c.lat);
     for (let i = 0; i < c.count; i++) {
       const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * c.r;
-      const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
+      const x = w.x + Math.cos(a) * d, z = w.z + Math.sin(a) * d;
       if (!inMap(x, z) || !clearOf(x, z, 2)) continue;
+      if (terrainSlope(x, z) > 1.2) continue;
       rockSpots.push({ x, z });
     }
   }
@@ -217,13 +178,18 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const bushMat = new THREE.MeshLambertMaterial({ color: 0x4f7a38 });
   const bushSpots: { x: number; z: number }[] = [];
   const bushClusters = [
-    { x: 115, z: 280, r: 30, count: 11 },  // near the hamlet
-    { x: 20, z: 340, r: 26, count: 8 },
-    { x: 130, z: 60, r: 24, count: 7 },
-    { x: -30, z: 100, r: 22, count: 6 },
-    { x: 230, z: -280, r: 28, count: 8 },  // upriver banks
-    { x: 320, z: 180, r: 30, count: 8 },   // Baiu pastures
+    { x: START.camp.x + 45, z: START.camp.z + 55, r: 30, count: 11 },
+    { x: START.camp.x - 60, z: START.camp.z - 30, r: 26, count: 8 },
+    { x: START.camp.x + 10, z: START.camp.z - 130, r: 26, count: 8 },
   ];
+  const bushGeos = [
+    { lat: 45.3625, lon: 25.5545, r: 35, count: 8 },   // upriver banks
+    { lat: 45.3480, lon: 25.5600, r: 40, count: 8 },   // Baiu pastures
+  ];
+  for (const c of bushGeos) {
+    const w = lonLatToWorld(c.lon, c.lat);
+    bushClusters.push({ x: w.x, z: w.z, r: c.r, count: c.count });
+  }
   for (const c of bushClusters) {
     for (let i = 0; i < c.count; i++) {
       const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * c.r;

@@ -5,9 +5,11 @@ import { G } from './state';
 import { Building, setOnBuildingComplete } from './buildings';
 import { Villager } from './units';
 import { initEras, updateEras, ERAS } from './eras';
-import { initInput } from './input';
+import { initInput, CameraRig } from './input';
 import { initMinimap, drawMinimap } from './minimap';
 import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast } from './ui';
+import { loadDem, lonLatToWorld, setRoads } from './terrain';
+import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -17,7 +19,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 6000);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 16000);
 
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -25,41 +27,77 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
 });
 
-const world = buildWorld(scene);
+let rig: CameraRig;
 
-// ---- starting state ----
-G.resources.wood = START.wood;
-G.resources.stone = START.stone;
-G.resources.food = START.food;
+async function boot(): Promise<void> {
+  await loadDem();
+  initPlots();
+  const camp = lonLatToWorld(CAMP_GEO.lon, CAMP_GEO.lat);
+  START.camp.x = camp.x;
+  START.camp.z = camp.z;
 
-const camp = new Building('camp', START.camp.x, START.camp.z, 'done', scene, 0.4);
-for (let i = 0; i < START.villagers; i++) {
-  spawnVillager(START.camp.x + 8 + (i % 2) * 3, START.camp.z + 6 + Math.floor(i / 2) * 3);
+  // historical roads as polylines between the real landmark sites
+  const P = (key: string): [number, number] => {
+    const p = plotByKey(key);
+    return [p.x, p.z];
+  };
+  setRoads([
+    [[camp.x, camp.z], P('townhall'), P('palace'), P('monastery')],
+    [P('monastery'), P('furnica'), P('economat'), P('cavalerilor'), P('guard'), P('peles')],
+    [P('guard'), P('pelisor')],
+    [P('pelisor'), P('foisor')],
+    [P('palace'), P('casino'), P('caraiman'), P('station')],
+    [P('townhall'), P('villa2'), P('villa3')],
+    [P('station'), P('villa1')],
+  ]);
+
+  const world = buildWorld(scene);
+
+  // ---- starting state ----
+  G.resources.wood = START.wood;
+  G.resources.stone = START.stone;
+  G.resources.food = START.food;
+
+  new Building('camp', START.camp.x, START.camp.z, 'done', scene, 0.4);
+  for (let i = 0; i < START.villagers; i++) {
+    spawnVillager(START.camp.x + 8 + (i % 2) * 3, START.camp.z + 6 + Math.floor(i / 2) * 3);
+  }
+
+  setOnBuildingComplete((b: Building) => {
+    toast(`${b.def.name} is complete.`);
+    refreshObjectives();
+    refreshSelectionPanel();
+  });
+
+  initEras(scene);
+
+  rig = initInput(canvas, camera, world);
+  rig.jumpTo(START.camp.x - 30, START.camp.z - 40);
+  initMinimap((x, z) => rig.jumpTo(x, z));
+
+  // ---- intro ----
+  document.getElementById('start-btn')!.addEventListener('click', () => {
+    document.getElementById('intro')!.style.display = 'none';
+    G.paused = false;
+    const era = ERAS[0];
+    showBanner(era.yearLabel, era.introTitle, era.introText);
+  });
+
+  updateHud();
+  requestAnimationFrame(frame);
+
+  // debug / test hooks
+  const dbg = window as unknown as Record<string, unknown>;
+  dbg.G = G;
+  dbg.rig = rig;
+  import('./terrain').then((t) => { dbg.terrain = t; });
+  dbg.__render = () => { renderer.render(scene, camera); return renderer.info.render.calls; };
 }
 
 function spawnVillager(x: number, z: number): void {
   new Villager(x, z, scene);
   updateHud();
 }
-
-setOnBuildingComplete((b: Building) => {
-  toast(`${b.def.name} is complete.`);
-  refreshObjectives();
-  refreshSelectionPanel();
-});
-
-initEras(scene);
-
-const rig = initInput(canvas, camera, world);
-initMinimap((x, z) => rig.jumpTo(x, z));
-
-// ---- intro ----
-document.getElementById('start-btn')!.addEventListener('click', () => {
-  document.getElementById('intro')!.style.display = 'none';
-  G.paused = false;
-  const era = ERAS[0];
-  showBanner(era.yearLabel, era.introTitle, era.introText);
-});
 
 // ---- main loop ----
 let last = performance.now();
@@ -73,7 +111,7 @@ function frame(now: number): void {
 }
 
 // rAF is suspended in hidden tabs (incl. headless previews) — keep ticking there
-setInterval(() => { if (document.hidden) tick(performance.now()); }, 100);
+setInterval(() => { if (document.hidden && rig) tick(performance.now()); }, 100);
 
 function tick(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -91,7 +129,6 @@ function tick(now: number): void {
     panelTimer += dt;
     if (panelTimer > 0.5) {
       panelTimer = 0;
-      // live progress for selected construction sites / training queues
       if (G.selectedBuilding && G.selectedBuilding.phase !== 'planned') refreshSelectionPanel();
     }
   }
@@ -101,20 +138,4 @@ function tick(now: number): void {
   renderer.render(scene, camera);
 }
 
-updateHud();
-requestAnimationFrame(frame);
-
-// debug / test hooks
-const dbg = window as unknown as Record<string, unknown>;
-dbg.G = G;
-dbg.rig = rig;
-import('./terrain').then((t) => { dbg.terrain = t; });
-dbg.__render = () => { renderer.render(scene, camera); return renderer.info.render.calls; };
-dbg.__shot = (w = 480) => {
-  renderer.render(scene, camera);
-  const c = document.createElement('canvas');
-  const h = Math.round(w * canvas.height / canvas.width);
-  c.width = w; c.height = h;
-  c.getContext('2d')!.drawImage(canvas, 0, 0, w, h);
-  return c.toDataURL('image/jpeg', 0.75);
-};
+boot();
