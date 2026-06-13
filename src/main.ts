@@ -16,6 +16,7 @@ import { initMinimap, drawMinimap } from './minimap';
 import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus } from './ui';
 import { loadDem, loadBackdrop, lonLatToWorld, setRoads, updateWater } from './terrain';
 import { initWildlife, updateWildlife } from './wildlife';
+import { autoAssign } from './labor';
 import { saveGame, loadGame, hasSave } from './save';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
@@ -229,6 +230,7 @@ function initControls(): void {
 }
 
 let autoSaveTimer = 0;
+let laborTimer = 0;
 
 // the settlement is wiped out — every villager has died (e.g. to bears)
 function checkGameOver(): void {
@@ -273,6 +275,8 @@ function tick(now: number): void {
       updateEras(sdt);
     }
     checkGameOver();
+    laborTimer += sdt * steps;
+    if (laborTimer > 1.2) { laborTimer = 0; autoAssign(); }
     autoSaveTimer += sdt * steps;
     if (autoSaveTimer > 30) { autoSaveTimer = 0; saveGame(); }
   }

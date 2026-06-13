@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { terrainHeight, surfaceHeight, walkable } from './terrain';
-import { G, ResourceNode } from './state';
+import { G, ResourceNode, GatherKind } from './state';
 import { Building, nearestDropoff, gatherBonusAt } from './buildings';
 import { hideNode } from './world';
 import { findPath } from './pathfind';
@@ -92,6 +92,7 @@ export class Villager {
   private path: { x: number; z: number }[] = []; // current nav waypoints
   private pathI = 0;
   private navTX = NaN; private navTZ = NaN; // target the path was computed for
+  private gNode: ResourceNode | null = null; // node a gather-camp worker is harvesting
 
   constructor(x: number, z: number, scene: THREE.Scene, profession?: Profession) {
     const outfit = profession
@@ -269,6 +270,8 @@ export class Villager {
   // give up the current workplace (frees its job slot)
   leaveWork(): void {
     if (this.workplace) { this.workplace.removeWorker(this); this.workplace = null; }
+    this.gNode = null;
+    if (this.carryMesh) this.carryMesh.visible = false;
   }
 
   // recalled from work — free the slot and stand down
@@ -279,7 +282,13 @@ export class Villager {
 
   // is this villager present and working at building b? (drives production)
   isWorkingAt(b: Building): boolean {
-    return this.task.kind === 'work' && this.task.building === b && this.task.sub === 'in';
+    if (this.task.kind !== 'work' || this.task.building !== b) return false;
+    if (b.def.boosts) return true; // gather-camp workers count as working while roaming
+    return this.task.sub === 'in';
+  }
+
+  isBuildingAt(b: Building): boolean {
+    return this.task.kind === 'build' && this.task.building === b;
   }
 
   private stepToward(tx: number, tz: number, dt: number): boolean {
@@ -331,6 +340,49 @@ export class Villager {
   }
 
   private clearPath(): void { this.path = []; this.navTX = NaN; }
+
+  // a gather-camp worker (lumber/quarry/forager): harvest the nearest matching
+  // node around the camp and haul it back — fully automatic, no orders needed
+  private campGather(camp: Building, kind: GatherKind, dt: number): void {
+    if (this.carry >= 10) {
+      this.carryMesh.visible = true;
+      this.carryMesh.material = carryMats[this.carryKind];
+      if ((this.x - camp.x) ** 2 + (this.z - camp.z) ** 2 < (camp.def.radius + 2) ** 2) {
+        G.resources[this.carryKind] += this.carry;
+        this.carry = 0; this.carryMesh.visible = false; this.clearPath();
+      } else this.navToward(camp.x, camp.z, dt);
+      return;
+    }
+    if (!this.gNode || !this.gNode.alive) { this.gNode = this.findCampNode(camp, kind); this.clearPath(); }
+    const node = this.gNode;
+    if (!node) {
+      if ((this.x - camp.x) ** 2 + (this.z - camp.z) ** 2 > (camp.def.radius + 3) ** 2) this.navToward(camp.x, camp.z, dt);
+      return;
+    }
+    if ((this.x - node.x) ** 2 + (this.z - node.z) ** 2 > 3.5 * 3.5) { this.navToward(node.x, node.z, dt); return; }
+    // at the node: harvest
+    this.workTimer += dt;
+    this.body.rotation.x = Math.sin(this.workTimer * 7) * 0.25;
+    const interval = 0.9 / gatherBonusAt(node.x, node.z, kind);
+    if (this.workTimer >= interval) {
+      this.workTimer = 0;
+      this.carryKind = kind;
+      this.carry += 2;
+      node.amount -= 2;
+      if (node.amount <= 0) { node.alive = false; hideNode(node); this.gNode = null; }
+    }
+  }
+
+  private findCampNode(camp: Building, kind: GatherKind): ResourceNode | null {
+    let best: ResourceNode | null = null;
+    let bd = ((camp.def.boostRange ?? 50) * 1.5) ** 2;
+    for (const n of G.nodes) {
+      if (!n.alive || n.kind !== kind) continue;
+      const d = (n.x - camp.x) ** 2 + (n.z - camp.z) ** 2;
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best;
+  }
 
   update(dt: number): void {
     const t = this.task;
@@ -406,13 +458,16 @@ export class Villager {
       case 'work': {
         const b = t.building;
         if (b.phase !== 'done' || G.buildings.indexOf(b) < 0) { this.leaveWork(); this.task = { kind: 'idle' }; break; }
-        if (t.sub === 'go') {
+        if (b.def.boosts) {
+          // a gather-camp worker: harvest nearby nodes and haul to the camp
+          this.campGather(b, b.def.boosts, dt);
+        } else if (t.sub === 'go') {
           const done = this.navToward(b.x, b.z, dt);
           const near = (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 1.5) ** 2;
           if (done || near) { t.sub = 'in'; this.workTimer = 0; }
         } else {
-          // present at the workplace: a small working sway (production is handled
-          // by the building, which counts present workers)
+          // present at a production/food building: a small working sway (output is
+          // handled by the building, which counts present workers)
           this.workTimer += dt;
           this.body.rotation.x = Math.sin(this.workTimer * 5) * 0.12;
           this.group.rotation.y = Math.atan2(b.x - this.x, b.z - this.z);

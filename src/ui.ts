@@ -143,22 +143,24 @@ export function refreshSelectionPanel(): void {
     } else {
       sub.textContent = b.def.desc;
       if (b.def.jobSlots) {
-        const present = b.presentWorkers();
-        const assigned = b.assignedWorkers();
-        const line = document.createElement('span');
-        line.style.fontSize = '12.5px';
-        line.style.opacity = '0.9';
-        const status = b.def.produces && present === 0 ? ' — idle, assign workers' : b.producing ? ' — working' : '';
-        line.textContent = `Workers: ${present} present · ${assigned}/${b.def.jobSlots} assigned${status}`;
-        actions.appendChild(line);
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;margin-top:3px';
+        const mkBtn = (label: string, delta: number): HTMLButtonElement => {
+          const btn = document.createElement('button');
+          btn.className = 'act'; btn.textContent = label; btn.style.padding = '2px 10px';
+          btn.addEventListener('click', (e) => { e.stopPropagation(); b.setDesired(b.desired + delta); refreshSelectionPanel(); });
+          return btn;
+        };
+        const minus = mkBtn('−', -1); minus.disabled = b.desired <= 0;
+        const plus = mkBtn('+', 1); plus.disabled = b.desired >= (b.def.jobSlots ?? 0);
+        const info = document.createElement('span');
+        info.textContent = `Workers ${b.presentWorkers()} / ${b.desired}  (max ${b.def.jobSlots})`;
+        row.append(minus, info, plus);
+        actions.appendChild(row);
         const hint = document.createElement('span');
-        hint.style.fontSize = '11.5px';
-        hint.style.opacity = '0.65';
-        hint.textContent = 'Right-click here with villagers selected to assign them.';
+        hint.style.cssText = 'font-size:11.5px;opacity:0.65';
+        hint.textContent = 'Villagers staff this on their own — just set how many you want.';
         actions.appendChild(hint);
-        if (assigned > 0) {
-          actionCard(actions, 'demolish', 'Recall workers', {}, false, () => { b.recallWorkers(); refreshSelectionPanel(); });
-        }
       }
       if (b.def.trains) {
         actionCard(actions, 'villager', 'Train villager', { food: 50 }, !canAfford({ food: 50 }), () => {

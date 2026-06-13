@@ -896,27 +896,27 @@ export const DEFS: Record<string, BuildingDef> = {
   },
   lumbercamp: {
     key: 'lumbercamp', name: 'Lumber Camp',
-    desc: 'A sawpit in the woods. Drop off timber here, and nearby felling goes faster.',
+    desc: 'A sawpit in the woods. Its woodcutters fell nearby trees and stack the timber. Place it among the forest.',
     cost: { wood: 30 }, buildPoints: 28, popCap: 0, isDropoff: true, trains: false, radius: 5,
-    boosts: 'wood', boostRange: 42, build: buildLumberCamp,
+    boosts: 'wood', boostRange: 42, jobSlots: 3, build: buildLumberCamp,
   },
   quarry: {
     key: 'quarry', name: 'Quarry',
-    desc: 'Worked rock face. Drop off stone here, and nearby cutting goes faster. Place it by an outcrop.',
+    desc: 'Worked rock face. Its masons cut nearby stone. Place it by an outcrop.',
     cost: { wood: 45 }, buildPoints: 36, popCap: 0, isDropoff: true, trains: false, radius: 5.5,
-    boosts: 'stone', boostRange: 42, build: buildQuarry,
+    boosts: 'stone', boostRange: 42, jobSlots: 3, build: buildQuarry,
   },
   forager: {
     key: 'forager', name: 'Forager’s Hut',
-    desc: 'Berry-pickers’ camp. Drop off food here, and nearby foraging goes faster.',
+    desc: 'Berry-pickers’ camp. Its foragers gather berries from nearby thickets.',
     cost: { wood: 30 }, buildPoints: 26, popCap: 0, isDropoff: true, trains: false, radius: 4.5,
-    boosts: 'food', boostRange: 40, build: buildForager,
+    boosts: 'food', boostRange: 40, jobSlots: 2, build: buildForager,
   },
   hunters: {
     key: 'hunters', name: 'Hunter’s Lodge',
     desc: 'Trappers and marksmen. Brings in game meat, and shoots wolves and bears that stray within range.',
     cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
-    foodTrickle: 0.4, defendRange: 50, defendDps: 17, build: buildHunters,
+    foodTrickle: 0.4, defendRange: 50, defendDps: 17, jobSlots: 1, build: buildHunters,
   },
   fishery: {
     key: 'fishery', name: 'Fisherman’s Hut',
@@ -985,11 +985,13 @@ export class Building {
   prodAccum = 0;
   producing = false; // a refining building actively converting (vs waiting on inputs)
   workers: Villager[] = []; // villagers assigned to this workplace
+  desired = 0; // how many workers the player wants here (auto-assignment target)
   plotKey: string | null = null;
   private heroModel: THREE.Group | null = null; // authored glTF, once loaded
 
   constructor(defKey: string, x: number, z: number, phase: BuildingPhase, scene: THREE.Scene, rotY = 0) {
     this.def = DEFS[defKey];
+    this.desired = this.def.jobSlots ?? 0; // new job buildings request a full crew by default
     this.x = x; this.z = z;
     this.phase = phase;
     // sit on the rendered mesh surface, not the full-res DEM, so buildings don't
@@ -1173,12 +1175,12 @@ export class Building {
     return this.workers.length;
   }
 
-  // claim a job slot for v; false if this isn't a workplace or it's full
+  // claim a job slot for v; false if this isn't a workplace or it's at its desired count
   assignWorker(v: Villager): boolean {
     if (!this.def.jobSlots || this.phase !== 'done') return false;
     this.workers = this.workers.filter((w) => w.alive && w.workplace === this);
     if (this.workers.includes(v)) return true;
-    if (this.workers.length >= this.def.jobSlots) return false;
+    if (this.workers.length >= this.desired) return false;
     this.workers.push(v);
     return true;
   }
@@ -1186,6 +1188,27 @@ export class Building {
   removeWorker(v: Villager): void {
     const i = this.workers.indexOf(v);
     if (i >= 0) this.workers.splice(i, 1);
+  }
+
+  // unfilled positions = desired minus already assigned (auto-assignment target)
+  openPositions(): number {
+    if (!this.def.jobSlots) return 0;
+    return Math.max(0, this.desired - this.assignedWorkers());
+  }
+
+  // raise/lower the desired worker count; releases extras if lowered
+  setDesired(n: number): void {
+    this.desired = Math.max(0, Math.min(this.def.jobSlots ?? 0, n));
+    while (this.assignedWorkers() > this.desired && this.workers.length > 0) {
+      this.workers[this.workers.length - 1].unassign();
+    }
+  }
+
+  // how many villagers are currently building this site (auto-staffing cap)
+  builderCount(): number {
+    let n = 0;
+    for (const v of G.villagers) if (v.isBuildingAt(this)) n++;
+    return n;
   }
 
   // recall every worker to idle (frees the slots)
