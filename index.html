@@ -34,7 +34,9 @@
     #topbar .res { display: flex; gap: 7px; align-items: center; }
     #topbar .dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); }
     #topbar .dot.wood { background: #8a5a2b; }
+    #topbar .dot.planks { background: #c9a26a; }
     #topbar .dot.stone { background: #9a958c; }
+    #topbar .dot.block { background: #c4bdaf; }
     #topbar .dot.food { background: #cc5a3a; }
     #topbar .dot.coin { background: #e7c64b; border-radius: 50%; }
     #topbar .dot.pop { background: #b05f4a; border-radius: 50%; }
@@ -83,7 +85,9 @@
     button.buildbtn .ci { display: inline-flex; align-items: center; gap: 3px; }
     button.buildbtn .cdot { width: 9px; height: 9px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.4); display: inline-block; }
     button.buildbtn .cdot.wood { background: #8a5a2b; }
+    button.buildbtn .cdot.planks { background: #c9a26a; }
     button.buildbtn .cdot.stone { background: #9a958c; }
+    button.buildbtn .cdot.block { background: #c4bdaf; }
     button.buildbtn .cdot.food { background: #cc5a3a; }
     button.buildbtn .cdot.coin { background: #e7c64b; border-radius: 50%; }
 
@@ -171,7 +175,9 @@
     </div>
     <div id="topbar" class="panel">
       <span class="res"><span class="dot wood"></span>Wood <span id="r-wood">0</span></span>
+      <span class="res"><span class="dot planks"></span>Planks <span id="r-planks">0</span></span>
       <span class="res"><span class="dot stone"></span>Stone <span id="r-stone">0</span></span>
+      <span class="res"><span class="dot block"></span>Block <span id="r-block">0</span></span>
       <span class="res"><span class="dot food"></span>Food <span id="r-food">0</span></span>
       <span class="res"><span class="dot coin"></span>Coin <span id="r-coin">0</span></span>
       <span class="res"><span class="dot pop"></span>Pop <span id="r-pop">0/0</span></span>

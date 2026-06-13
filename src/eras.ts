@@ -34,15 +34,22 @@ function hasGatherCamp(): boolean {
   );
 }
 
+function hasRefinery(): boolean {
+  return G.buildings.some(
+    (b) => b.phase === 'done' && (b.def.key === 'sawmill' || b.def.key === 'stonecutter'),
+  );
+}
+
 export const ERAS: Era[] = [
   {
     yearLabel: 'Anno 1690', enterYear: 1690,
     name: 'The Hermits’ Valley',
     introTitle: 'The Hermits’ Valley',
-    introText: 'Spătar Mihail Cantacuzino has vowed to raise a monastery in this wild valley, named for holy Mount Sinai. Gather timber from the forests and stone from the slopes — a lumber camp or quarry beside the work will speed your hands.',
+    introText: 'Spătar Mihail Cantacuzino has vowed to raise a monastery in this wild valley, named for holy Mount Sinai. Gather timber and stone — then raise a Stonecutter’s Yard to dress rough stone into the blocks a monastery needs, and a Sawmill to saw planks for finer work.',
     objectives: [
       obj('gathercamp', 'Raise a Lumber Camp or Quarry to work the land faster', () => hasGatherCamp()),
-      obj('monastery', 'Build the Sinaia Monastery at its sacred site', () => landmarkDone('monastery')),
+      obj('refine', 'Raise a Sawmill or Stonecutter’s Yard to refine raw goods', () => hasRefinery()),
+      obj('monastery', 'Build the Sinaia Monastery (needs dressed stone blocks)', () => landmarkDone('monastery')),
       obj('pop8', 'Grow the settlement to 8 souls', () => pop() >= 8),
       obj('food100', 'Stockpile 100 food for the consecration feast', () => G.resources.food >= 100),
     ],

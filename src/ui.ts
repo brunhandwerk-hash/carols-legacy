@@ -6,7 +6,9 @@ const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
 export function updateHud(): void {
   $('r-wood').textContent = String(Math.floor(G.resources.wood));
+  $('r-planks').textContent = String(Math.floor(G.resources.planks));
   $('r-stone').textContent = String(Math.floor(G.resources.stone));
+  $('r-block').textContent = String(Math.floor(G.resources.block));
   $('r-food').textContent = String(Math.floor(G.resources.food));
   $('r-coin').textContent = String(Math.floor(G.resources.coin));
   $('r-pop').textContent = `${G.villagers.length}/${G.popCap}`;
@@ -75,7 +77,7 @@ export function setGhostRequest(fn: GhostRequest): void { ghostRequest = fn; }
 
 // cost rendered as little colored resource chips for the build cards
 function costChips(cost: Partial<Record<ResKind, number>>): string {
-  const chips = (['wood', 'stone', 'food', 'coin'] as ResKind[])
+  const chips = (['wood', 'planks', 'stone', 'block', 'food', 'coin'] as ResKind[])
     .filter((k) => cost[k])
     .map((k) => `<span class="ci"><span class="cdot ${k}"></span>${cost[k]}</span>`);
   return chips.join('');
@@ -92,6 +94,8 @@ const ICONS: Record<string, string> = {
   fishery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 C8 6 15 6 19 12 C15 18 8 18 4 12 Z"/><path d="M19 12 L22.5 9 L22.5 15 Z"/><circle cx="8.5" cy="11" r="0.9" fill="currentColor" stroke="none"/></svg>',
   bridge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9 C8 16 16 16 22 9"/><line x1="2" y1="9" x2="2" y2="15"/><line x1="22" y1="9" x2="22" y2="15"/><line x1="8" y1="13.2" x2="8" y2="17"/><line x1="16" y1="13.2" x2="16" y2="17"/><line x1="12" y1="14" x2="12" y2="17.4"/></svg>',
   stana: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13 c0 -2.5 2 -4 4 -4 c1.3 0 2.4 0.6 3 1.6 M5 13 v4 h8 v-4"/><path d="M13 12 h3 l2 2 v3 h-5"/><circle cx="7.5" cy="15.2" r="0.7" fill="currentColor" stroke="none"/><path d="M16 11 l1.2 -1.4 M18 12 l1.6 -1"/></svg>',
+  sawmill: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="13" r="5"/><circle cx="9" cy="13" r="1.2"/><path d="M9 8 v-2 M9 18 v2 M4 13 h-2 M14 13 h6 l2 2 v3 h-6"/></svg>',
+  stonecutter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="13" width="8" height="6"/><path d="M3.5 13 l2 -2.5 h8 l-2 2.5 M11.5 13 l2 -2.5 v6 l-2 2.5"/><path d="M15 6 l4 4 l-2 2 l-4 -4 z"/></svg>',
   villager: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="7.5" r="3"/><path d="M5.5 20 c0 -4 3 -6.5 6.5 -6.5 s6.5 2.5 6.5 6.5"/></svg>',
   hammer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 6 l5 5 l-2 2 l-5 -5 z"/><line x1="11.5" y1="10.5" x2="5" y2="17" /><path d="M12 5 a3 3 0 0 1 4 0"/></svg>',
   demolish: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9 h16 M6 9 v10 h12 V9 M9 9 V6 h6 v3 M10 12.5 v3.5 M14 12.5 v3.5"/></svg>',
@@ -180,7 +184,7 @@ export function refreshSelectionPanel(): void {
     name.textContent = `${sel.length} Villagers`;
   }
   sub.textContent = selectionStatusText(sel);
-  for (const key of ['hut', 'sheepfold', 'lumbercamp', 'quarry', 'forager', 'hunters', 'fishery', 'stana', 'bridge'] as const) {
+  for (const key of ['hut', 'sheepfold', 'lumbercamp', 'quarry', 'forager', 'sawmill', 'stonecutter', 'hunters', 'fishery', 'stana', 'bridge'] as const) {
     const def = DEFS[key];
     actionCard(actions, key, def.name, def.cost, !canAfford(def.cost), () => ghostRequest(key));
   }

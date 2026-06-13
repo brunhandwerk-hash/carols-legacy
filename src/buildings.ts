@@ -19,6 +19,9 @@ export interface BuildingDef {
   radius: number; // approach / footprint radius
   foodTrickle?: number; // food per second when complete
   coinTrickle?: number; // coin per second when complete (offerings, tolls)
+  // refining: every `interval` s, if `input` is affordable, consume it and add
+  // `output` (a production chain — e.g. wood -> planks at the sawmill)
+  produces?: { input: Partial<Record<ResKind, number>>; output: Partial<Record<ResKind, number>>; interval: number };
   boosts?: GatherKind;  // speeds up gathering of this kind within boostRange
   boostRange?: number;  // metres
   defendRange?: number; // metres — auto-damages wild animals within this radius
@@ -822,6 +825,52 @@ function buildStana(g: THREE.Group): void {
   g.add(box(1.3, 0.7, 0.95, M.hay, 0.4, 0, 3.1));
 }
 
+function buildSawmill(g: THREE.Group): void {
+  // a water-powered sawmill (joagăr): log lodge, a waterwheel on the river side,
+  // a circular saw on a bench, log piles and stacked planks
+  const W = 4.6, D = 3.6, wallH = 2.3;
+  g.add(box(W + 0.5, 0.4, D + 0.5, M.stone, 0, 0, 0));
+  g.add(tag(box(W, wallH, D, M.log, 0, 0.4, 0), 'wall'));
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const)
+    g.add(cylinder(0.2, wallH + 0.4, M.logDark, (sx * W) / 2, 0.3, (sz * D) / 2));
+  const eaves = 0.4 + wallH;
+  g.add(tag(gableRoof(W, D, 1.6, M.shingle, 0, eaves, 0, 0.5, 0.5), 'roof'));
+  g.add(door(0, 0.4, D / 2 + 0.02, M.logDark, M.shingle));
+  // waterwheel (axis along z, turning on the building's -x side)
+  const wheel = new THREE.Group();
+  wheel.add(new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.16, 6, 18), M.logDark));
+  for (let i = 0; i < 4; i++) { const sp = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 0.12), M.log); sp.rotation.z = (i / 4) * Math.PI; wheel.add(sp); }
+  for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; const p = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.5), M.logDark); p.position.set(Math.cos(a) * 1.3, Math.sin(a) * 1.3, 0); p.rotation.z = a; wheel.add(p); }
+  wheel.position.set(-W / 2 - 0.5, 1.45, 1.0);
+  wheel.traverse((o) => { o.castShadow = true; });
+  g.add(wheel);
+  // saw bench + blade outside
+  g.add(sawhorse(2.4, 1.2, 0));
+  const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.05, 16), M.iron);
+  blade.rotation.x = Math.PI / 2; blade.position.set(2.4, 1.15, 1.2); blade.castShadow = true; g.add(blade);
+  g.add(plankStack(2.7, -1.2, 0.2));
+  g.add(woodpile(-2.6, -1.6, Math.PI / 2, 2.6));
+  g.add(groundLitter(1.5, 0, 2.6, 16, M.log));
+}
+
+function buildStonecutter(g: THREE.Group): void {
+  // a stonecutter's yard: an open timber-roofed shed, a cutting bench, dressed
+  // blocks stacked ready, rubble and a sledge
+  for (const [sx, sz] of [[-2.2, -1.7], [2.2, -1.7], [-2.2, 1.7], [2.2, 1.7]] as const)
+    g.add(cylinder(0.17, 2.7, M.logDark, sx, 0, sz));
+  g.add(tag(gableRoof(5.2, 4.2, 1.3, M.shingle, 0, 2.7, 0, 0.4, 0.3), 'roof'));
+  // cutting bench with a half-dressed block on top
+  g.add(box(2.2, 0.85, 1.0, M.stoneDark, 0, 0, -0.6));
+  g.add(box(2.4, 0.14, 1.2, M.log, 0, 0.85, -0.6));
+  g.add(box(0.9, 0.5, 0.7, M.stone, 0, 0.99, -0.6));
+  // dressed blocks stacked, ready to haul
+  g.add(box(0.9, 0.6, 0.7, M.stone, 2.0, 0, 1.4));
+  g.add(box(0.9, 0.6, 0.7, M.stone, 2.0, 0.6, 1.4));
+  g.add(box(0.85, 0.55, 0.65, M.stone, 1.1, 0, 1.6));
+  g.add(handcart(-2.2, 1.4, 0.5));
+  g.add(groundLitter(0, 0.4, 2.8, 22, M.stone));
+}
+
 export const DEFS: Record<string, BuildingDef> = {
   camp: {
     key: 'camp', name: 'Founders’ Hall', desc: 'The first hearth of the valley — the heart of the settlement. Drop off resources, shelter new settlers, and ward off wolves and bears nearby.',
@@ -873,6 +922,18 @@ export const DEFS: Record<string, BuildingDef> = {
     cost: { wood: 55 }, buildPoints: 44, popCap: 0, isDropoff: false, trains: false, radius: 7,
     foodTrickle: 0.85, build: buildStana,
   },
+  sawmill: {
+    key: 'sawmill', name: 'Sawmill',
+    desc: 'A water-powered joagăr. Steadily saws stockpiled timber into planks — needed for finer buildings.',
+    cost: { wood: 55 }, buildPoints: 46, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    produces: { input: { wood: 3 }, output: { planks: 1 }, interval: 2.5 }, build: buildSawmill,
+  },
+  stonecutter: {
+    key: 'stonecutter', name: 'Stonecutter’s Yard',
+    desc: 'Masons dress rough stone into building blocks — needed for the monastery and grand houses.',
+    cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    produces: { input: { stone: 3 }, output: { block: 1 }, interval: 3 }, build: buildStonecutter,
+  },
   bridge: {
     key: 'bridge', name: 'Bridge',
     desc: 'A timber crossing over the Prahova, linking the two banks. Place it across the river.',
@@ -881,7 +942,7 @@ export const DEFS: Record<string, BuildingDef> = {
   },
   monastery: {
     key: 'monastery', name: 'Sinaia Monastery', desc: 'Mihail Cantacuzino’s vow — the seed from which a town will grow. Pilgrims’ offerings fill the treasury.',
-    cost: { wood: 220, stone: 160 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
+    cost: { wood: 180, stone: 90, block: 12 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
     coinTrickle: 0.5,
     // drop a monastery/church .glb at public/models/monastery.glb to use it; until
     // then the procedural build below is the fallback
@@ -889,8 +950,8 @@ export const DEFS: Record<string, BuildingDef> = {
     build: buildMonastery,
   },
   oldinn: {
-    key: 'oldinn', name: 'Pilgrims’ Inn', desc: 'Lodging for travelers crossing the Predeal pass — their tolls swell the treasury.',
-    cost: { wood: 120, stone: 40, coin: 60 }, buildPoints: 120, popCap: 4, isDropoff: false, trains: false, radius: 7,
+    key: 'oldinn', name: 'Pilgrims’ Inn', desc: 'Lodging for travelers crossing the Predeal pass — their tolls swell the treasury. Its fine carpentry calls for sawn planks.',
+    cost: { wood: 80, planks: 20, stone: 30, coin: 60 }, buildPoints: 120, popCap: 4, isDropoff: false, trains: false, radius: 7,
     coinTrickle: 0.7, build: buildInn,
   },
 };
@@ -910,6 +971,8 @@ export class Building {
   trainQueue: number[] = []; // remaining seconds per queued villager
   foodAccum = 0;
   coinAccum = 0;
+  prodAccum = 0;
+  producing = false; // a refining building actively converting (vs waiting on inputs)
   plotKey: string | null = null;
   private heroModel: THREE.Group | null = null; // authored glTF, once loaded
 
@@ -1116,6 +1179,23 @@ export class Building {
         const whole = Math.floor(this.coinAccum);
         this.coinAccum -= whole;
         G.resources.coin += whole;
+      }
+    }
+    // refining: turn raw resources into finished goods on a timer, if the inputs
+    // are in the stockpile (a production chain — e.g. wood -> planks)
+    const pr = this.def.produces;
+    if (pr) {
+      this.prodAccum += dt;
+      if (this.prodAccum >= pr.interval) {
+        if (canAfford(pr.input)) {
+          this.prodAccum -= pr.interval;
+          pay(pr.input);
+          for (const k of RES_KINDS) if (pr.output[k]) G.resources[k] += pr.output[k]!;
+          this.producing = true;
+        } else {
+          this.prodAccum = pr.interval; // idle, waiting on inputs
+          this.producing = false;
+        }
       }
     }
     if (this.trainQueue.length > 0) {

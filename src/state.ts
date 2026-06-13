@@ -3,12 +3,14 @@ import type { Villager } from './units';
 import type { Building } from './buildings';
 import type { Bear } from './wildlife';
 
-export type ResKind = 'wood' | 'stone' | 'food' | 'coin';
+export type ResKind = 'wood' | 'planks' | 'stone' | 'block' | 'food' | 'coin';
 
-// canonical order — drives HUD, affordability checks, cost rendering
-export const RES_KINDS: ResKind[] = ['wood', 'stone', 'food', 'coin'];
+// canonical order — drives HUD, affordability checks, cost rendering.
+// Refined goods (planks, block) sit next to their raw source.
+export const RES_KINDS: ResKind[] = ['wood', 'planks', 'stone', 'block', 'food', 'coin'];
 
-// kinds a villager can physically gather from a node (coin is building-generated)
+// kinds a villager can physically gather from a node (planks/block are refined
+// at workshops; coin is building-generated)
 export type GatherKind = 'wood' | 'stone' | 'food';
 
 export interface ResourceNode {
@@ -40,7 +42,7 @@ export interface GameState {
 }
 
 export const G: GameState = {
-  resources: { wood: 0, stone: 0, food: 0, coin: 0 },
+  resources: { wood: 0, planks: 0, stone: 0, block: 0, food: 0, coin: 0 },
   popCap: 0,
   eraIndex: 0,
   year: 1690,
