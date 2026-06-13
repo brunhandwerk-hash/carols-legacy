@@ -3,6 +3,7 @@ import { surfaceHeight, walkable, inMap } from './terrain';
 import { MAP, START } from './config';
 import { G } from './state';
 import type { Villager } from './units';
+import { findPath } from './pathfind';
 import { toast, showBanner } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -63,6 +64,9 @@ export class Bear {
   private biteTimer = 0;
   private life = BEAR_LIFETIME;
   private walkPhase = Math.random() * Math.PI * 2;
+  private path: { x: number; z: number }[] = []; // nav waypoints around obstacles
+  private pathI = 0;
+  private repath = 0; private navTX = NaN; private navTZ = NaN;
 
   constructor(x: number, z: number, scene: THREE.Scene) {
     this.group.add(buildBearMesh());
@@ -151,6 +155,25 @@ export class Bear {
     return dist;
   }
 
+  // move toward a (possibly moving) target, routing around buildings/slopes. The
+  // path is recomputed on a throttle, or when the target shifts a lot — and when
+  // line-of-sight is clear findPath just returns the target, so an open chase is
+  // a direct, responsive pursuit.
+  private navToward(tx: number, tz: number, dt: number): void {
+    this.repath -= dt;
+    if (this.path.length === 0 || this.repath <= 0 || (this.navTX - tx) ** 2 + (this.navTZ - tz) ** 2 > 64) {
+      this.navTX = tx; this.navTZ = tz;
+      this.path = findPath(this.x, this.z, tx, tz);
+      this.pathI = 0; this.repath = 0.4;
+    }
+    let wp = this.path[Math.min(this.pathI, this.path.length - 1)] || { x: tx, z: tz };
+    if (Math.hypot(wp.x - this.x, wp.z - this.z) < 3 && this.pathI < this.path.length - 1) {
+      this.pathI++;
+      wp = this.path[this.pathI];
+    }
+    this.stepToward(wp.x, wp.z, dt);
+  }
+
   update(dt: number): void {
     if (!this.alive) return;
     this.life -= dt;
@@ -159,8 +182,8 @@ export class Bear {
     if (this.state === 'leave') {
       // head for the nearest map edge and vanish into the forest
       const ex = this.x < 0 ? MAP.minX + 20 : MAP.maxX - 20;
-      const dist = this.stepToward(ex, this.z, dt);
-      if (dist < 4 || !inMap(this.x, this.z)) this.die(false);
+      this.navToward(ex, this.z, dt);
+      if (Math.abs(this.x - ex) < 6 || !inMap(this.x, this.z)) this.die(false);
       return;
     }
 
@@ -175,7 +198,7 @@ export class Bear {
     const d = Math.hypot(tx - this.x, tz - this.z);
     // stay glued to the victim — keep closing even at point-blank range so a
     // fleeing villager can't break contact between bites and run forever
-    if (d > BEAR_CONTACT * 0.6) this.stepToward(tx, tz, dt);
+    if (d > BEAR_CONTACT * 0.6) this.navToward(tx, tz, dt);
     else this.group.rotation.y = Math.atan2(tx - this.x, tz - this.z);
     if (d <= BEAR_CONTACT) {
       this.biteTimer += dt;
