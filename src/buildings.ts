@@ -928,13 +928,13 @@ export const DEFS: Record<string, BuildingDef> = {
     key: 'sawmill', name: 'Sawmill',
     desc: 'A water-powered joagăr. Steadily saws stockpiled timber into planks — needed for finer buildings.',
     cost: { wood: 55 }, buildPoints: 46, popCap: 0, isDropoff: false, trains: false, radius: 5,
-    produces: { input: { wood: 3 }, output: { planks: 1 }, interval: 2.5 }, jobSlots: 2, build: buildSawmill,
+    produces: { input: { wood: 2 }, output: { planks: 1 }, interval: 2.5 }, jobSlots: 2, build: buildSawmill,
   },
   stonecutter: {
     key: 'stonecutter', name: 'Stonecutter’s Yard',
     desc: 'Masons dress rough stone into building blocks — needed for the monastery and grand houses.',
     cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
-    produces: { input: { stone: 3 }, output: { block: 1 }, interval: 3 }, jobSlots: 2, build: buildStonecutter,
+    produces: { input: { stone: 2 }, output: { block: 1 }, interval: 3 }, jobSlots: 2, build: buildStonecutter,
   },
   bridge: {
     key: 'bridge', name: 'Bridge',
@@ -944,7 +944,7 @@ export const DEFS: Record<string, BuildingDef> = {
   },
   monastery: {
     key: 'monastery', name: 'Sinaia Monastery', desc: 'Mihail Cantacuzino’s vow — the seed from which a town will grow. Pilgrims’ offerings fill the treasury.',
-    cost: { wood: 180, stone: 90, block: 12 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
+    cost: { wood: 180, stone: 90, block: 10 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
     coinTrickle: 0.5,
     // drop a monastery/church .glb at public/models/monastery.glb to use it; until
     // then the procedural build below is the fallback
@@ -953,7 +953,7 @@ export const DEFS: Record<string, BuildingDef> = {
   },
   oldinn: {
     key: 'oldinn', name: 'Pilgrims’ Inn', desc: 'Lodging for travelers crossing the Predeal pass — their tolls swell the treasury. Its fine carpentry calls for sawn planks.',
-    cost: { wood: 80, planks: 20, stone: 30, coin: 60 }, buildPoints: 120, popCap: 4, isDropoff: false, trains: false, radius: 7,
+    cost: { wood: 80, planks: 16, stone: 30, coin: 60 }, buildPoints: 120, popCap: 4, isDropoff: false, trains: false, radius: 7,
     coinTrickle: 0.7, build: buildInn,
   },
 };

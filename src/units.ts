@@ -82,6 +82,8 @@ export class Villager {
   alive = true;
   sheltered = false;
   workplace: Building | null = null; // assigned workplace, if any
+  // what to go back to once a bear scare passes (auto-resume)
+  private resume: { kind: 'work'; b: Building } | { kind: 'gather'; node: ResourceNode } | { kind: 'build'; b: Building } | null = null;
   private shelterTimer = 0;
   profession: Profession;
   private workTimer = 0;
@@ -172,10 +174,27 @@ export class Villager {
     if (this.sheltered) return;
     if (this.task.kind === 'shelter') return;
     if (this.task.kind === 'fight') return;
+    // remember what we were doing so we can return to it once the coast is clear
+    const t = this.task;
+    if (t.kind === 'work') this.resume = { kind: 'work', b: t.building };
+    else if (t.kind === 'gather') this.resume = { kind: 'gather', node: t.node };
+    else if (t.kind === 'build') this.resume = { kind: 'build', b: t.building };
     this.leaveWork();
     const refuge = this.nearestRefuge();
     if (refuge) this.task = { kind: 'shelter', building: refuge, sub: 'go' };
     else this.task = { kind: 'fight', bear, sub: 'go' };
+  }
+
+  // return to the pre-scare job if it's still valid, otherwise stand down
+  private resumeOrIdle(): void {
+    const r = this.resume;
+    this.resume = null;
+    if (r) {
+      if (r.kind === 'work' && r.b.phase === 'done' && G.buildings.indexOf(r.b) >= 0) { this.orderWork(r.b); return; }
+      if (r.kind === 'gather' && r.node.alive) { this.orderGather(r.node); return; }
+      if (r.kind === 'build' && r.b.phase === 'site') { this.orderBuild(r.b); return; }
+    }
+    this.task = { kind: 'idle' };
   }
 
   private nearestRefuge(): Building | null {
@@ -191,7 +210,7 @@ export class Villager {
   private emerge(): void {
     this.sheltered = false;
     this.group.visible = true;
-    this.task = { kind: 'idle' };
+    this.resumeOrIdle();
   }
 
   takeDamage(d: number): void {
@@ -216,7 +235,7 @@ export class Villager {
     if ((this.task.kind === 'build' || this.task.kind === 'work') && this.task.building === b) this.task = { kind: 'idle' };
   }
 
-  orderMove(x: number, z: number): void { this.leaveWork(); this.task = { kind: 'move', x, z }; }
+  orderMove(x: number, z: number): void { this.resume = null; this.leaveWork(); this.task = { kind: 'move', x, z }; }
   orderGather(node: ResourceNode): void {
     this.leaveWork();
     if (this.carry > 0 && this.carryKind !== node.kind) this.carry = 0;
@@ -396,7 +415,7 @@ export class Villager {
       }
       case 'fight': {
         const bear = t.bear;
-        if (!bear.alive) { this.body.rotation.x = 0; this.task = { kind: 'idle' }; break; }
+        if (!bear.alive) { this.body.rotation.x = 0; this.resumeOrIdle(); break; }
         const d2 = (this.x - bear.x) ** 2 + (this.z - bear.z) ** 2;
         if (t.sub === 'go') {
           this.stepToward(bear.x, bear.z, dt);
