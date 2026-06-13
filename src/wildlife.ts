@@ -117,7 +117,7 @@ export class Bear {
   private nearestVillager(): Villager | null {
     let best: Villager | null = null, bd = Infinity;
     for (const v of G.villagers) {
-      if (!v.alive) continue;
+      if (!v.alive || v.sheltered) continue; // can't maul someone safe indoors
       const d = (v.x - this.x) ** 2 + (v.z - this.z) ** 2;
       if (d < bd) { bd = d; best = v; }
     }
@@ -164,9 +164,9 @@ export class Bear {
       return;
     }
 
-    // commit to one victim — only re-pick when it's dead or has escaped the leash
-    // — so a determined bear actually runs someone down instead of dithering
-    if (!this.target || !this.target.alive ||
+    // commit to one victim — only re-pick when it's dead, has taken refuge, or has
+    // escaped the leash — so a determined bear runs someone down instead of dithering
+    if (!this.target || !this.target.alive || this.target.sheltered ||
         (this.target.x - this.x) ** 2 + (this.target.z - this.z) ** 2 > BEAR_LEASH * BEAR_LEASH) {
       this.target = this.nearestVillager();
     }
@@ -178,7 +178,6 @@ export class Bear {
     if (d > BEAR_CONTACT * 0.6) this.stepToward(tx, tz, dt);
     else this.group.rotation.y = Math.atan2(tx - this.x, tz - this.z);
     if (d <= BEAR_CONTACT) {
-      this.target.panic(this.x, this.z); // make it bolt
       this.biteTimer += dt;
       if (this.biteTimer >= BEAR_BITE_INTERVAL) { this.biteTimer = 0; this.target.takeDamage(BEAR_DMG); }
     } else {
@@ -239,6 +238,15 @@ export function updateWildlife(dt: number): void {
   }
 
   for (const b of G.bears.slice()) b.update(dt);
+
+  // villagers react to a bear that comes near: take refuge in a nearby building,
+  // or stand and fight it off (see Villager.alarm)
+  const ALARM = 26;
+  for (const bear of G.bears) {
+    for (const v of G.villagers) {
+      if ((v.x - bear.x) ** 2 + (v.z - bear.z) ** 2 < ALARM * ALARM) v.alarm(bear);
+    }
+  }
 
   // building auto-defence: any completed building with a defendDps shoots bears
   // within its defendRange (Founders' Hall = weak, Hunter's Lodge = strong)

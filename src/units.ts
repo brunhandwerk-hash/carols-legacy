@@ -10,8 +10,11 @@ type Task =
   | { kind: 'move'; x: number; z: number }
   | { kind: 'gather'; node: ResourceNode; sub: 'go' | 'work' | 'return' }
   | { kind: 'build'; building: Building; sub: 'go' | 'work' }
-  | { kind: 'flee'; fromX: number; fromZ: number; t: number }
+  | { kind: 'shelter'; building: Building; sub: 'go' | 'in' }
   | { kind: 'fight'; bear: Bear; sub: 'go' | 'work' };
+
+const REFUGE_RANGE = 70; // a threatened villager runs to a building this close
+const SHELTER_SAFE = 48;  // emerges once no bear has been this near for a moment
 
 const cloth = (color: number, rough = 0.86): THREE.MeshStandardMaterial =>
   new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
@@ -76,6 +79,8 @@ export class Villager {
   hp = 40;
   maxHp = 40;
   alive = true;
+  sheltered = false;
+  private shelterTimer = 0;
   profession: Profession;
   private workTimer = 0;
   private bobPhase = Math.random() * Math.PI * 2;
@@ -150,18 +155,38 @@ export class Villager {
       }
       case 'build':
         return t.sub === 'go' ? `Walking to ${t.building.def.name}` : `Building the ${t.building.def.name}`;
-      case 'flee': return 'Fleeing a wild animal!';
+      case 'shelter': return t.sub === 'in' ? 'Sheltering indoors' : 'Running for refuge!';
       case 'fight': return t.sub === 'go' ? 'Closing on the beast' : 'Fighting off the beast!';
     }
   }
 
   setSelected(sel: boolean): void { this.ring.visible = sel; }
 
-  // flee a threat (a bear's approach) unless the player has ordered this villager
-  // to stand and fight
-  panic(fromX: number, fromZ: number): void {
+  // react to a wild animal: take refuge in the nearest building if one is close,
+  // otherwise stand and fight it off. A player-ordered fight is left alone.
+  alarm(bear: Bear): void {
+    if (this.sheltered) return;
+    if (this.task.kind === 'shelter') return;
     if (this.task.kind === 'fight') return;
-    this.task = { kind: 'flee', fromX, fromZ, t: 2.6 };
+    const refuge = this.nearestRefuge();
+    if (refuge) this.task = { kind: 'shelter', building: refuge, sub: 'go' };
+    else this.task = { kind: 'fight', bear, sub: 'go' };
+  }
+
+  private nearestRefuge(): Building | null {
+    let best: Building | null = null, bd = REFUGE_RANGE * REFUGE_RANGE;
+    for (const b of G.buildings) {
+      if (b.phase !== 'done') continue;
+      const d = (b.x - this.x) ** 2 + (b.z - this.z) ** 2;
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best;
+  }
+
+  private emerge(): void {
+    this.sheltered = false;
+    this.group.visible = true;
+    this.task = { kind: 'idle' };
   }
 
   takeDamage(d: number): void {
@@ -295,12 +320,22 @@ export class Villager {
         }
         break;
       }
-      case 'flee': {
-        t.t -= dt;
-        const dx = this.x - t.fromX, dz = this.z - t.fromZ;
-        const d = Math.hypot(dx, dz) || 1;
-        this.stepToward(this.x + (dx / d) * 10, this.z + (dz / d) * 10, dt);
-        if (t.t <= 0) this.task = { kind: 'idle' };
+      case 'shelter': {
+        const b = t.building;
+        if (b.phase !== 'done' || G.buildings.indexOf(b) < 0) { this.emerge(); break; }
+        if (t.sub === 'go') {
+          const arrived = this.stepToward(b.x, b.z, dt) ||
+            (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 1.5) ** 2;
+          if (arrived) { t.sub = 'in'; this.sheltered = true; this.group.visible = false; this.shelterTimer = 0; }
+        } else {
+          this.shelterTimer += dt;
+          let danger = false;
+          for (const bear of G.bears) {
+            if ((bear.x - b.x) ** 2 + (bear.z - b.z) ** 2 < SHELTER_SAFE * SHELTER_SAFE) { danger = true; break; }
+          }
+          if (danger) this.shelterTimer = 0;
+          if (this.shelterTimer > 2.5) this.emerge();
+        }
         break;
       }
       case 'fight': {
