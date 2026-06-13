@@ -29,10 +29,16 @@ export interface BuildingDef {
   defendRange?: number; // metres — auto-damages wild animals within this radius
   defendDps?: number;   // damage per second dealt to animals in defendRange
   noFoundation?: boolean; // skip the terraced stone foundation (e.g. bridges)
+  requires?: string[];    // building keys that must be 'done' before this unlocks
   // optional authored glTF "hero" model — swaps in for the procedural mesh once
   // loaded (landmarks only); the procedural `build` stays as the fallback
   model?: { url: string } & FitOpts;
   build: (g: THREE.Group) => void;
+}
+
+// is this building unlocked? (all its prerequisite buildings are completed)
+export function prereqsMet(def: BuildingDef): boolean {
+  return !def.requires || def.requires.every((k) => G.buildings.some((b) => b.def.key === k && b.phase === 'done'));
 }
 
 export const GATHER_BONUS = 1.7; // carry-rate multiplier near a matching gather camp
@@ -922,18 +928,21 @@ export const DEFS: Record<string, BuildingDef> = {
     key: 'stana', name: 'Stână (Mountain Dairy)',
     desc: 'A shepherds’ dairy. Cattle graze the paddock and are milked for a steady supply of food. Best on open meadow.',
     cost: { wood: 55 }, buildPoints: 44, popCap: 0, isDropoff: false, trains: false, radius: 7,
+    requires: ['sheepfold'],
     foodTrickle: 0.85, jobSlots: 2, build: buildStana,
   },
   sawmill: {
     key: 'sawmill', name: 'Sawmill',
     desc: 'A water-powered joagăr. Steadily saws stockpiled timber into planks — needed for finer buildings.',
     cost: { wood: 55 }, buildPoints: 46, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    requires: ['lumbercamp'],
     produces: { input: { wood: 2 }, output: { planks: 1 }, interval: 2.5 }, jobSlots: 2, build: buildSawmill,
   },
   stonecutter: {
     key: 'stonecutter', name: 'Stonecutter’s Yard',
     desc: 'Masons dress rough stone into building blocks — needed for the monastery and grand houses.',
     cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    requires: ['quarry'],
     produces: { input: { stone: 2 }, output: { block: 1 }, interval: 3 }, jobSlots: 2, build: buildStonecutter,
   },
   bridge: {

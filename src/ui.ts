@@ -1,5 +1,5 @@
 import { G, canAfford, pay, ResKind } from './state';
-import { Building, DEFS } from './buildings';
+import { Building, DEFS, prereqsMet } from './buildings';
 import type { Villager } from './units';
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -204,7 +204,14 @@ export function refreshSelectionPanel(): void {
   sub.textContent = selectionStatusText(sel);
   for (const key of ['hut', 'sheepfold', 'lumbercamp', 'quarry', 'forager', 'sawmill', 'stonecutter', 'hunters', 'fishery', 'stana', 'bridge'] as const) {
     const def = DEFS[key];
-    actionCard(actions, key, def.name, def.cost, !canAfford(def.cost), () => ghostRequest(key));
+    const unlocked = prereqsMet(def);
+    const btn = actionCard(actions, key, def.name, def.cost, !unlocked || !canAfford(def.cost), () => ghostRequest(key));
+    if (!unlocked) {
+      const reqNames = (def.requires ?? []).map((k) => DEFS[k]?.name ?? k).join(', ');
+      btn.title = `Requires ${reqNames}`;
+      const costEl = btn.querySelector('.cost');
+      if (costEl) costEl.innerHTML = `<span style="color:#d8775f">🔒 needs ${reqNames}</span>`;
+    }
   }
 }
 
