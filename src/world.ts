@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MAP, PALETTE, START } from './config';
-import { terrainHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRiverMesh, buildRoadMesh, registerFlatSpot, roadDistance, lonLatToWorld, TREELINE } from './terrain';
+import { terrainHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRiverMesh, buildRoadMesh, buildBackdropMesh, registerFlatSpot, roadDistance, lonLatToWorld, TREELINE } from './terrain';
 import { PLOTS } from './plots';
 import { G, ResourceNode } from './state';
 
@@ -29,7 +29,9 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   registerFlatSpot(START.camp.x, START.camp.z, 14);
 
   scene.background = new THREE.Color(PALETTE.sky);
-  scene.fog = new THREE.Fog(PALETTE.fog, 900, 9000);
+  // light, long-range haze: enough atmospheric perspective to give the distant
+  // massifs depth, but far enough that the peaks stay visible on the horizon
+  scene.fog = new THREE.Fog(PALETTE.fog, 1400, 40000);
 
   const hemi = new THREE.HemisphereLight(0xcfe4f0, 0x6a7a52, 0.85);
   scene.add(hemi);
@@ -49,6 +51,8 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
 
   const terrain = buildTerrainMesh();
   scene.add(terrain);
+  const backdrop = buildBackdropMesh();
+  if (backdrop) scene.add(backdrop);
   scene.add(buildRiverMesh());
   scene.add(buildRoadMesh());
 

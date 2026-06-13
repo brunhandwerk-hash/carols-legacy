@@ -31,6 +31,22 @@ export async function loadDem(): Promise<void> {
   traceRiver();
 }
 
+// ---- wide-area backdrop DEM (the surrounding Bucegi / Baiului massifs) ----
+interface BackMeta { minLat: number; maxLat: number; minLon: number; maxLon: number; w: number; h: number; minElev: number; maxElev: number }
+let backDem: Int16Array | null = null;
+let backMeta: BackMeta | null = null;
+
+export async function loadBackdrop(): Promise<void> {
+  try {
+    const [metaRes, binRes] = await Promise.all([fetch('/backdrop.json'), fetch('/backdrop.bin')]);
+    if (!metaRes.ok || !binRes.ok) return;
+    backMeta = await metaRes.json();
+    backDem = new Int16Array(await binRes.arrayBuffer());
+  } catch {
+    backDem = null; // backdrop is purely cosmetic — never block boot on it
+  }
+}
+
 export function lonLatToWorld(lon: number, lat: number): { x: number; z: number } {
   const fx = (lon - meta.minLon) / (meta.maxLon - meta.minLon);
   const fz = (meta.maxLat - lat) / (meta.maxLat - meta.minLat); // north at minZ
@@ -290,6 +306,86 @@ export function updateWater(dt: number): void {
   if (!waterMat || !waterMat.normalMap) return;
   waterMat.normalMap.offset.y = (waterMat.normalMap.offset.y + dt * 0.06) % 1;
   waterMat.map!.offset.y = (waterMat.map!.offset.y + dt * 0.03) % 1;
+}
+
+// A static backdrop of the real surrounding mountains, built from the wide-area
+// low-res DEM (loadBackdrop). It rings the detailed playable terrain: every
+// vertex is placed with the same lon/lat->world mapping, so the Bucegi to the
+// west and the Baiului to the east sit exactly where they really are. The
+// central playable footprint is left hollow (the detailed mesh fills it); a
+// one-cell apron of backdrop quads tucks under the detailed edge to avoid gaps.
+export function buildBackdropMesh(): THREE.Mesh | null {
+  if (!backDem || !backMeta) return null;
+  const { w, h, minLat, maxLat, minLon, maxLon } = backMeta;
+  const N = w * h;
+  const wx = new Float32Array(N), wz = new Float32Array(N), asl = new Float32Array(N);
+  for (let j = 0; j < h; j++) {
+    const lat = maxLat - (j / (h - 1)) * (maxLat - minLat); // row 0 = north
+    for (let i = 0; i < w; i++) {
+      const lon = minLon + (i / (w - 1)) * (maxLon - minLon);
+      const p = lonLatToWorld(lon, lat);
+      const k = j * w + i;
+      wx[k] = p.x; wz[k] = p.z; asl[k] = backDem[k];
+    }
+  }
+  // approximate horizontal cell size (m) for slope + apron tuck
+  const cell = Math.hypot(wx[1] - wx[0], wz[1] - wz[0]) || 80;
+  const inX = (x: number) => x > MAP.minX && x < MAP.maxX;
+  const inZ = (z: number) => z > MAP.minZ && z < MAP.maxZ;
+  const interior = (x: number, z: number): boolean => inX(x) && inZ(z);
+
+  const pos = new Float32Array(N * 3);
+  const col = new Float32Array(N * 3);
+  const c = new THREE.Color();
+  const forestLo = new THREE.Color(0x35492c), forestHi = new THREE.Color(0x4a6738);
+  const alpine = new THREE.Color(0x8f9a6a);
+  const rock = new THREE.Color(0x8a8479), rockHi = new THREE.Color(0xa39c8f), snow = new THREE.Color(0xeef2f5);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const k = j * w + i;
+      // tuck vertices that fall inside the playable footprint far down so the
+      // detailed terrain hides them; keep true elevation everywhere outside
+      const inside = interior(wx[k], wz[k]);
+      const y = (asl[k] - baseElev) - (inside ? 60 : 0);
+      pos[k * 3] = wx[k]; pos[k * 3 + 1] = y; pos[k * 3 + 2] = wz[k];
+      // slope from grid neighbours
+      const il = k - (i > 0 ? 1 : 0), ir = k + (i < w - 1 ? 1 : 0);
+      const iu = k - (j > 0 ? w : 0), id = k + (j < h - 1 ? w : 0);
+      const dh = Math.hypot(asl[ir] - asl[il], asl[id] - asl[iu]) / (2 * cell);
+      const a = asl[k];
+      // elevation bands: forest -> alpine pasture -> rock, with snow up high
+      if (a < 1350) c.copy(forestLo).lerp(forestHi, Math.min(1, Math.max(0, (a - 760) / 590)));
+      else if (a < 1700) c.copy(forestHi).lerp(alpine, (a - 1350) / 350);
+      else c.copy(alpine).lerp(rockHi, Math.min(1, (a - 1700) / 350));
+      if (dh > 0.5) c.lerp(a > 1500 ? rockHi : rock, Math.min(1, (dh - 0.5) / 0.7));
+      if (a > 1850) c.lerp(snow, Math.min(1, (a - 1850) / 280));
+      col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+    }
+  }
+
+  const idx: number[] = [];
+  for (let j = 0; j < h - 1; j++) {
+    for (let i = 0; i < w - 1; i++) {
+      const a = j * w + i, b = a + 1, d = a + w, e = d + 1;
+      // skip quads whose centre sits well inside the playable footprint (the
+      // detailed mesh covers it); keep a one-cell apron straddling the edge
+      const cxw = (wx[a] + wx[e]) / 2, czw = (wz[a] + wz[e]) / 2;
+      if (cxw > MAP.minX + cell && cxw < MAP.maxX - cell && czw > MAP.minZ + cell && czw < MAP.maxZ - cell) continue;
+      idx.push(a, d, b, b, d, e);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'backdrop';
+  mesh.raycast = () => {}; // inert for picking
+  mesh.renderOrder = -1;   // draw first, behind everything
+  return mesh;
 }
 
 export function buildRiverMesh(): THREE.Mesh {

@@ -9,7 +9,7 @@ import { initEras, updateEras, ERAS } from './eras';
 import { initInput, CameraRig } from './input';
 import { initMinimap, drawMinimap } from './minimap';
 import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus } from './ui';
-import { loadDem, lonLatToWorld, setRoads, updateWater } from './terrain';
+import { loadDem, loadBackdrop, lonLatToWorld, setRoads, updateWater } from './terrain';
 import { initWildlife, updateWildlife } from './wildlife';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
@@ -25,7 +25,9 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 16000);
+// far plane reaches past the backdrop massifs (~17 km out) so the real Bucegi
+// and Baiului peaks are not clipped on the horizon
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 70000);
 
 // soft image-based lighting so PBR materials catch ambient sky/ground bounce
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -43,6 +45,7 @@ let rig: CameraRig;
 
 async function boot(): Promise<void> {
   await loadDem();
+  await loadBackdrop();
   initPlots();
   const camp = lonLatToWorld(CAMP_GEO.lon, CAMP_GEO.lat);
   START.camp.x = camp.x;
@@ -106,6 +109,7 @@ async function boot(): Promise<void> {
   dbg.G = G;
   dbg.rig = rig;
   dbg.scene = scene;
+  dbg.camera = camera;
   import('./terrain').then((t) => { dbg.terrain = t; });
   dbg.__render = () => { renderer.render(scene, camera); return renderer.info.render.calls; };
 }
