@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { START } from './config';
 import { buildWorld, updateForestReveal } from './world';
 import { G } from './state';
@@ -35,8 +40,32 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 pmrem.dispose();
 renderer.setRenderTarget(null); // PMREM can leave its offscreen target bound
 
+// ---- post-processing: ground-contact AO + a touch of bloom, filmic output ----
+// GTAO darkens crevices and where forms meet (eaves, walls, foundations) so the
+// buildings read as solid masses, not flat boxes. World-space AO radius is small
+// (~0.5 m) so the distant mountains pick up no AO artefacts. A gentle bloom lifts
+// highlights (snow, water, lamps) for atmosphere. OutputPass does the ACES + sRGB.
+// HDR + 4x MSAA target: HalfFloat keeps bloom smooth (no banding), samples keep
+// edges crisp (the composer otherwise bypasses the renderer's antialiasing)
+const hdrTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+  type: THREE.HalfFloatType, samples: 4,
+});
+const composer = new EffectComposer(renderer, hdrTarget);
+composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+composer.setSize(window.innerWidth, window.innerHeight);
+composer.addPass(new RenderPass(scene, camera));
+const gtao = new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
+gtao.output = GTAOPass.OUTPUT.Default;
+gtao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1, thickness: 1, scale: 1.4, samples: 16, distanceFallOff: 1, screenSpaceRadius: false });
+gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, radiusExponent: 1, rings: 2, samples: 16 });
+composer.addPass(gtao);
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.16, 0.5, 0.85);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
 });
@@ -111,7 +140,7 @@ async function boot(): Promise<void> {
   dbg.scene = scene;
   dbg.camera = camera;
   import('./terrain').then((t) => { dbg.terrain = t; });
-  dbg.__render = () => { renderer.render(scene, camera); return renderer.info.render.calls; };
+  dbg.__render = () => { composer.render(); return renderer.info.render.calls; };
 }
 
 function spawnVillager(x: number, z: number): void {
@@ -181,7 +210,7 @@ function tick(now: number): void {
     updateForestReveal();
   }
 
-  renderer.render(scene, camera);
+  composer.render();
 }
 
 boot();

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { surfaceHeight } from './terrain';
 import { G, ResKind, RES_KINDS, GatherKind, pay, canAfford } from './state';
 import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial, retainingWallMaterial } from './materials';
@@ -77,8 +78,15 @@ ERA_STYLES = [
   { wall: M.brick, roof: M.roofGray },     // interbellic — brick & slate
 ];
 
+// Every structural box gets softly beveled edges instead of hard cube corners —
+// the chamfer catches the light and reads far less "low-poly blocky". The radius
+// is clamped to the thinnest dimension so slender trim/planks stay crisp.
 function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  const r = Math.min(0.07, Math.min(w, h, d) * 0.22);
+  const geo = r > 0.012
+    ? new RoundedBoxGeometry(w, h, d, 1, r)
+    : new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y + h / 2, z);
   m.castShadow = true;
   m.receiveShadow = true;
