@@ -17,6 +17,7 @@ import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast,
 import { loadDem, loadBackdrop, lonLatToWorld, setRoads, updateWater } from './terrain';
 import { initWildlife, updateWildlife } from './wildlife';
 import { autoAssign } from './labor';
+import { updatePopulation, setPopulationCallbacks } from './population';
 import { saveGame, loadGame, hasSave } from './save';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
@@ -118,6 +119,10 @@ async function boot(): Promise<void> {
 
   initEras(scene);
   initWildlife(scene);
+  setPopulationCallbacks(
+    () => toast('A new settler has come of age in Sinaia.'),
+    () => toast('A villager has starved — the larder is empty!'),
+  );
 
   rig = initInput(canvas, camera, world);
   rig.jumpTo(START.camp.x - 30, START.camp.z - 40);
@@ -273,6 +278,7 @@ function tick(now: number): void {
       for (const v of G.villagers) v.update(sdt);
       for (const b of G.buildings) b.update(sdt, spawnVillager);
       updateWildlife(sdt);
+      updatePopulation(sdt, spawnVillager);
       updateEras(sdt);
     }
     checkGameOver();

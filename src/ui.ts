@@ -163,20 +163,6 @@ export function refreshSelectionPanel(): void {
         hint.textContent = 'Villagers staff this on their own — just set how many you want.';
         actions.appendChild(hint);
       }
-      if (b.def.trains) {
-        actionCard(actions, 'villager', 'Train villager', { food: 50 }, !canAfford({ food: 50 }), () => {
-          const err = b.queueVillager();
-          if (err) toast(err); else toast('A new settler is on the way.');
-          refreshSelectionPanel();
-        });
-        if (b.trainQueue.length > 0) {
-          const span = document.createElement('span');
-          span.style.fontSize = '12.5px';
-          span.style.opacity = '0.8';
-          span.textContent = `Training: ${b.trainQueue.length} queued`;
-          actions.appendChild(span);
-        }
-      }
     }
     if (b.demolishable) {
       const btn = actionCard(actions, 'demolish', 'Demolish', {}, false, () => {
