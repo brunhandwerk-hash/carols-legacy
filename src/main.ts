@@ -13,7 +13,7 @@ import { Villager } from './units';
 import { initEras, updateEras, ERAS } from './eras';
 import { initInput, CameraRig } from './input';
 import { initMinimap, drawMinimap } from './minimap';
-import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus } from './ui';
+import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus, initBuildBar } from './ui';
 import { loadDem, loadBackdrop, lonLatToWorld, setRoads, updateWater } from './terrain';
 import { initWildlife, updateWildlife } from './wildlife';
 import { autoAssign } from './labor';
@@ -140,6 +140,7 @@ async function boot(): Promise<void> {
   }
 
   initControls();
+  initBuildBar();
   updateHud();
   requestAnimationFrame(frame);
 

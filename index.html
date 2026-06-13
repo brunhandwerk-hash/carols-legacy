@@ -111,6 +111,32 @@
     #minimap-wrap { right: 12px; bottom: 12px; padding: 6px; }
     #minimap { display: block; cursor: crosshair; border-radius: 3px; }
 
+    #buildbar {
+      bottom: 12px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+      max-width: 60vw; padding: 7px 9px;
+    }
+    #buildbar .bb {
+      display: flex; flex-direction: column; align-items: center; gap: 3px; width: 72px;
+      background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
+      border-radius: 5px; padding: 6px 4px; font-family: inherit; cursor: pointer;
+    }
+    #buildbar .bb:hover:not(:disabled) { background: #51422d; }
+    #buildbar .bb:disabled { opacity: 0.45; cursor: default; }
+    #buildbar .bb .ic { width: 24px; height: 24px; color: var(--accent); display: flex; align-items: center; justify-content: center; }
+    #buildbar .bb .ic svg { width: 24px; height: 24px; }
+    #buildbar .bb .nm { font-size: 10.5px; line-height: 1.1; text-align: center; }
+    #buildbar .bb.locked .nm { color: #d8775f; }
+    #buildbar .bb .cost { font-size: 9.5px; opacity: 0.9; display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; }
+    #buildbar .bb .ci { display: inline-flex; align-items: center; gap: 2px; }
+    #buildbar .bb .cdot { width: 7px; height: 7px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.4); display: inline-block; }
+    #buildbar .bb .cdot.wood { background: #8a5a2b; }
+    #buildbar .bb .cdot.planks { background: #c9a26a; }
+    #buildbar .bb .cdot.stone { background: #9a958c; }
+    #buildbar .bb .cdot.block { background: #c4bdaf; }
+    #buildbar .bb .cdot.food { background: #cc5a3a; }
+    #buildbar .bb .cdot.coin { background: #e7c64b; border-radius: 50%; }
+
     #gameover {
       position: fixed; inset: 0; background: rgba(12, 8, 6, 0.92); z-index: 11;
       display: none; align-items: center; justify-content: center; text-align: center;
@@ -192,6 +218,7 @@
       <div class="sub" id="sel-sub"></div>
       <div class="actions" id="sel-actions"></div>
     </div>
+    <div id="buildbar" class="panel"></div>
     <div id="minimap-wrap" class="panel"><canvas id="minimap" width="200" height="260"></canvas></div>
     <div id="banner"><div class="year"></div><div class="title"></div><div class="text"></div></div>
     <div id="toast"></div>

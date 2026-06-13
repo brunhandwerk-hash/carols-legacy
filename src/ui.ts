@@ -15,6 +15,7 @@ export function updateHud(): void {
   const idle = G.villagers.filter((v) => v.isIdle).length;
   $('idle-count').textContent = String(idle);
   ($('idle-btn') as HTMLButtonElement).disabled = idle === 0;
+  refreshBuildBar();
 }
 
 // ---- resource hover tooltip ----
@@ -204,16 +205,46 @@ export function refreshSelectionPanel(): void {
     name.textContent = `${sel.length} Villagers`;
   }
   sub.textContent = selectionStatusText(sel);
-  for (const key of ['hut', 'sheepfold', 'lumbercamp', 'quarry', 'forager', 'sawmill', 'stonecutter', 'hunters', 'fishery', 'stana', 'bridge'] as const) {
+  // building is done from the always-on build bar, not here (see initBuildBar)
+}
+
+// ---- always-on build toolbar (build without selecting anyone) ----
+const BUILD_KEYS = ['hut', 'sheepfold', 'lumbercamp', 'quarry', 'forager', 'sawmill', 'stonecutter', 'hunters', 'fishery', 'stana', 'bridge'] as const;
+const buildBtns: Record<string, HTMLButtonElement> = {};
+
+function reqNames(def: { requires?: string[] }): string {
+  return (def.requires ?? []).map((k) => DEFS[k]?.name ?? k).join(', ');
+}
+
+export function initBuildBar(): void {
+  const bar = $('buildbar');
+  bar.innerHTML = '';
+  for (const key of BUILD_KEYS) {
     const def = DEFS[key];
+    const btn = document.createElement('button');
+    btn.className = 'bb';
+    btn.innerHTML =
+      `<span class="ic">${ICONS[key] ?? ''}</span>` +
+      `<span class="nm">${def.name}</span>` +
+      `<span class="cost">${costChips(def.cost)}</span>`;
+    btn.addEventListener('click', (e) => { e.stopPropagation(); ghostRequest(key); });
+    bar.appendChild(btn);
+    buildBtns[key] = btn;
+  }
+  refreshBuildBar();
+}
+
+export function refreshBuildBar(): void {
+  for (const key of BUILD_KEYS) {
+    const def = DEFS[key];
+    const btn = buildBtns[key];
+    if (!btn) continue;
     const unlocked = prereqsMet(def);
-    const btn = actionCard(actions, key, def.name, def.cost, !unlocked || !canAfford(def.cost), () => ghostRequest(key));
-    if (!unlocked) {
-      const reqNames = (def.requires ?? []).map((k) => DEFS[k]?.name ?? k).join(', ');
-      btn.title = `Requires ${reqNames}`;
-      const costEl = btn.querySelector('.cost');
-      if (costEl) costEl.innerHTML = `<span style="color:#d8775f">🔒 needs ${reqNames}</span>`;
-    }
+    btn.disabled = !unlocked || !canAfford(def.cost);
+    btn.classList.toggle('locked', !unlocked);
+    const nm = btn.querySelector('.nm');
+    if (nm) nm.textContent = unlocked ? def.name : `🔒 ${def.name}`;
+    btn.title = unlocked ? def.desc : `Requires ${reqNames(def)}`;
   }
 }
 
