@@ -3,6 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { surfaceHeight } from './terrain';
 import { G, ResKind, RES_KINDS, GatherKind, pay, canAfford } from './state';
 import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial, retainingWallMaterial } from './materials';
+import { loadModel, fitModel, FitOpts } from './models';
 
 export type BuildingPhase = 'planned' | 'site' | 'done';
 
@@ -23,6 +24,9 @@ export interface BuildingDef {
   defendRange?: number; // metres — auto-damages wild animals within this radius
   defendDps?: number;   // damage per second dealt to animals in defendRange
   noFoundation?: boolean; // skip the terraced stone foundation (e.g. bridges)
+  // optional authored glTF "hero" model — swaps in for the procedural mesh once
+  // loaded (landmarks only); the procedural `build` stays as the fallback
+  model?: { url: string } & FitOpts;
   build: (g: THREE.Group) => void;
 }
 
@@ -878,7 +882,11 @@ export const DEFS: Record<string, BuildingDef> = {
   monastery: {
     key: 'monastery', name: 'Sinaia Monastery', desc: 'Mihail Cantacuzino’s vow — the seed from which a town will grow. Pilgrims’ offerings fill the treasury.',
     cost: { wood: 220, stone: 160 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
-    coinTrickle: 0.5, build: buildMonastery,
+    coinTrickle: 0.5,
+    // drop a monastery/church .glb at public/models/monastery.glb to use it; until
+    // then the procedural build below is the fallback
+    model: { url: '/models/monastery.glb', fitRadius: 16 },
+    build: buildMonastery,
   },
   oldinn: {
     key: 'oldinn', name: 'Pilgrims’ Inn', desc: 'Lodging for travelers crossing the Predeal pass — their tolls swell the treasury.',
@@ -903,6 +911,7 @@ export class Building {
   foodAccum = 0;
   coinAccum = 0;
   plotKey: string | null = null;
+  private heroModel: THREE.Group | null = null; // authored glTF, once loaded
 
   constructor(defKey: string, x: number, z: number, phase: BuildingPhase, scene: THREE.Scene, rotY = 0) {
     this.def = DEFS[defKey];
@@ -928,6 +937,23 @@ export class Building {
       this.makeSiteMarker(phase);
       if (phase === 'site') this.addFoundation();
     }
+    if (this.def.model) this.loadHeroModel();
+  }
+
+  // load the authored glTF and swap it in for the procedural mesh; on any
+  // failure (missing file, bad model) the procedural fallback simply stays
+  private loadHeroModel(): void {
+    const m = this.def.model!;
+    loadModel(m.url).then((g) => {
+      const fitted = fitModel(g, { fitRadius: m.fitRadius ?? this.def.radius, scale: m.scale, rotationY: m.rotationY, yOffset: m.yOffset });
+      fitted.position.y = this.structure.position.y; // sit on the same terrace lift
+      fitted.traverse((o) => { o.userData.building = this; });
+      this.heroModel = fitted;
+      this.group.add(fitted);
+      const show = this.phase === 'done';
+      fitted.visible = show;
+      if (show) this.structure.visible = false;
+    }).catch(() => { /* keep the procedural building */ });
   }
 
   // terrace the ground under the footprint: a flat earthen cap with a stone
@@ -1057,6 +1083,12 @@ export class Building {
     this.structure.visible = true;
     this.structure.scale.y = 1;
     if (this.siteMarker) { this.group.remove(this.siteMarker); this.siteMarker = null; }
+    // if the authored hero model is loaded, reveal it in place of the procedural mesh
+    if (this.heroModel) {
+      this.heroModel.position.y = this.structure.position.y;
+      this.heroModel.visible = true;
+      this.structure.visible = false;
+    }
     G.popCap += this.def.popCap;
     if (!instant && onBuildingComplete) onBuildingComplete(this);
   }
