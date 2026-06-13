@@ -4,6 +4,7 @@ import { surfaceHeight } from './terrain';
 import { G, ResKind, RES_KINDS, GatherKind, pay, canAfford } from './state';
 import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial, retainingWallMaterial } from './materials';
 import { loadModel, fitModel, FitOpts } from './models';
+import type { Villager } from './units';
 
 export type BuildingPhase = 'planned' | 'site' | 'done';
 
@@ -22,6 +23,7 @@ export interface BuildingDef {
   // refining: every `interval` s, if `input` is affordable, consume it and add
   // `output` (a production chain — e.g. wood -> planks at the sawmill)
   produces?: { input: Partial<Record<ResKind, number>>; output: Partial<Record<ResKind, number>>; interval: number };
+  jobSlots?: number;    // worker positions — output requires assigned workers, and scales with how many are present
   boosts?: GatherKind;  // speeds up gathering of this kind within boostRange
   boostRange?: number;  // metres
   defendRange?: number; // metres — auto-damages wild animals within this radius
@@ -884,7 +886,7 @@ export const DEFS: Record<string, BuildingDef> = {
   sheepfold: {
     key: 'sheepfold', name: 'Sheepfold', desc: 'Mountain sheep — a steady trickle of food.',
     cost: { wood: 50 }, buildPoints: 40, popCap: 0, isDropoff: false, trains: false, radius: 6.5,
-    foodTrickle: 0.55, build: buildSheepfold,
+    foodTrickle: 0.55, jobSlots: 1, build: buildSheepfold,
   },
   lumbercamp: {
     key: 'lumbercamp', name: 'Lumber Camp',
@@ -914,25 +916,25 @@ export const DEFS: Record<string, BuildingDef> = {
     key: 'fishery', name: 'Fisherman’s Hut',
     desc: 'A stilted hut and jetty on the Prahova. A steady catch of fish feeds the settlement. Build it at the water’s edge.',
     cost: { wood: 45 }, buildPoints: 38, popCap: 0, isDropoff: false, trains: false, radius: 4.5,
-    foodTrickle: 0.7, build: buildFishery,
+    foodTrickle: 0.7, jobSlots: 1, build: buildFishery,
   },
   stana: {
     key: 'stana', name: 'Stână (Mountain Dairy)',
     desc: 'A shepherds’ dairy. Cattle graze the paddock and are milked for a steady supply of food. Best on open meadow.',
     cost: { wood: 55 }, buildPoints: 44, popCap: 0, isDropoff: false, trains: false, radius: 7,
-    foodTrickle: 0.85, build: buildStana,
+    foodTrickle: 0.85, jobSlots: 2, build: buildStana,
   },
   sawmill: {
     key: 'sawmill', name: 'Sawmill',
     desc: 'A water-powered joagăr. Steadily saws stockpiled timber into planks — needed for finer buildings.',
     cost: { wood: 55 }, buildPoints: 46, popCap: 0, isDropoff: false, trains: false, radius: 5,
-    produces: { input: { wood: 3 }, output: { planks: 1 }, interval: 2.5 }, build: buildSawmill,
+    produces: { input: { wood: 3 }, output: { planks: 1 }, interval: 2.5 }, jobSlots: 2, build: buildSawmill,
   },
   stonecutter: {
     key: 'stonecutter', name: 'Stonecutter’s Yard',
     desc: 'Masons dress rough stone into building blocks — needed for the monastery and grand houses.',
     cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
-    produces: { input: { stone: 3 }, output: { block: 1 }, interval: 3 }, build: buildStonecutter,
+    produces: { input: { stone: 3 }, output: { block: 1 }, interval: 3 }, jobSlots: 2, build: buildStonecutter,
   },
   bridge: {
     key: 'bridge', name: 'Bridge',
@@ -973,6 +975,7 @@ export class Building {
   coinAccum = 0;
   prodAccum = 0;
   producing = false; // a refining building actively converting (vs waiting on inputs)
+  workers: Villager[] = []; // villagers assigned to this workplace
   plotKey: string | null = null;
   private heroModel: THREE.Group | null = null; // authored glTF, once loaded
 
@@ -1147,6 +1150,41 @@ export class Building {
     this.updateRise();
   }
 
+  // ---- worker assignment (workplaces with jobSlots) ----
+  // how many assigned workers have actually arrived and are working
+  presentWorkers(): number {
+    let n = 0;
+    for (const v of this.workers) if (v.alive && v.isWorkingAt(this)) n++;
+    return Math.min(n, this.def.jobSlots ?? 0);
+  }
+
+  // how many are assigned (en route or present); also prunes stale entries
+  assignedWorkers(): number {
+    this.workers = this.workers.filter((w) => w.alive && w.workplace === this);
+    return this.workers.length;
+  }
+
+  // claim a job slot for v; false if this isn't a workplace or it's full
+  assignWorker(v: Villager): boolean {
+    if (!this.def.jobSlots || this.phase !== 'done') return false;
+    this.workers = this.workers.filter((w) => w.alive && w.workplace === this);
+    if (this.workers.includes(v)) return true;
+    if (this.workers.length >= this.def.jobSlots) return false;
+    this.workers.push(v);
+    return true;
+  }
+
+  removeWorker(v: Villager): void {
+    const i = this.workers.indexOf(v);
+    if (i >= 0) this.workers.splice(i, 1);
+  }
+
+  // recall every worker to idle (frees the slots)
+  recallWorkers(): void {
+    for (const v of this.workers.slice()) v.unassign();
+    this.workers.length = 0;
+  }
+
   private finish(instant: boolean): void {
     this.phase = 'done';
     this.progress = this.def.buildPoints;
@@ -1165,8 +1203,11 @@ export class Building {
 
   update(dt: number, spawnVillager: (x: number, z: number) => void): void {
     if (this.phase !== 'done') return;
-    if (this.def.foodTrickle) {
-      this.foodAccum += this.def.foodTrickle * dt;
+    // a job building only works with assigned workers present; output scales with
+    // how many are there. Buildings without jobSlots produce automatically.
+    const workforce = this.def.jobSlots ? this.presentWorkers() : 1;
+    if (this.def.foodTrickle && workforce > 0) {
+      this.foodAccum += this.def.foodTrickle * dt * workforce;
       if (this.foodAccum >= 1) {
         const whole = Math.floor(this.foodAccum);
         this.foodAccum -= whole;
@@ -1184,8 +1225,8 @@ export class Building {
     // refining: turn raw resources into finished goods on a timer, if the inputs
     // are in the stockpile (a production chain — e.g. wood -> planks)
     const pr = this.def.produces;
-    if (pr) {
-      this.prodAccum += dt;
+    if (pr && workforce > 0) {
+      this.prodAccum += dt * workforce;
       if (this.prodAccum >= pr.interval) {
         if (canAfford(pr.input)) {
           this.prodAccum -= pr.interval;
@@ -1197,6 +1238,8 @@ export class Building {
           this.producing = false;
         }
       }
+    } else if (pr) {
+      this.producing = false; // no workers
     }
     if (this.trainQueue.length > 0) {
       this.trainQueue[0] -= dt;

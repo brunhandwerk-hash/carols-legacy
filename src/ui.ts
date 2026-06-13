@@ -142,6 +142,24 @@ export function refreshSelectionPanel(): void {
       sub.textContent = `Under construction — ${pct}%. Right-click with villagers selected to build.`;
     } else {
       sub.textContent = b.def.desc;
+      if (b.def.jobSlots) {
+        const present = b.presentWorkers();
+        const assigned = b.assignedWorkers();
+        const line = document.createElement('span');
+        line.style.fontSize = '12.5px';
+        line.style.opacity = '0.9';
+        const status = b.def.produces && present === 0 ? ' — idle, assign workers' : b.producing ? ' — working' : '';
+        line.textContent = `Workers: ${present} present · ${assigned}/${b.def.jobSlots} assigned${status}`;
+        actions.appendChild(line);
+        const hint = document.createElement('span');
+        hint.style.fontSize = '11.5px';
+        hint.style.opacity = '0.65';
+        hint.textContent = 'Right-click here with villagers selected to assign them.';
+        actions.appendChild(hint);
+        if (assigned > 0) {
+          actionCard(actions, 'demolish', 'Recall workers', {}, false, () => { b.recallWorkers(); refreshSelectionPanel(); });
+        }
+      }
       if (b.def.trains) {
         actionCard(actions, 'villager', 'Train villager', { food: 50 }, !canAfford({ food: 50 }), () => {
           const err = b.queueVillager();

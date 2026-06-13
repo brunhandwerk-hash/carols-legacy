@@ -293,6 +293,10 @@ export function initInput(
         } else if (bld.phase === 'planned') {
           setSelection([], bld); // open its panel so the player can start it
           toast(`${bld.def.name} — begin construction from its panel.`);
+        } else if (bld.def.jobSlots) {
+          for (const v of G.selected) v.orderWork(bld);
+          toast(`${bld.assignedWorkers()}/${bld.def.jobSlots} working at the ${bld.def.name}.`);
+          refreshSelectionPanel();
         } else {
           for (const v of G.selected) v.orderMove(bld.x + bld.def.radius + 1, bld.z + bld.def.radius + 1);
         }

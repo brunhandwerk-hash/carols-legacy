@@ -10,6 +10,7 @@ type Task =
   | { kind: 'move'; x: number; z: number }
   | { kind: 'gather'; node: ResourceNode; sub: 'go' | 'work' | 'return' }
   | { kind: 'build'; building: Building; sub: 'go' | 'work' }
+  | { kind: 'work'; building: Building; sub: 'go' | 'in' }
   | { kind: 'shelter'; building: Building; sub: 'go' | 'in' }
   | { kind: 'fight'; bear: Bear; sub: 'go' | 'work' };
 
@@ -80,6 +81,7 @@ export class Villager {
   maxHp = 40;
   alive = true;
   sheltered = false;
+  workplace: Building | null = null; // assigned workplace, if any
   private shelterTimer = 0;
   profession: Profession;
   private workTimer = 0;
@@ -155,6 +157,8 @@ export class Villager {
       }
       case 'build':
         return t.sub === 'go' ? `Walking to ${t.building.def.name}` : `Building the ${t.building.def.name}`;
+      case 'work':
+        return t.sub === 'go' ? `Heading to the ${t.building.def.name}` : `Working at the ${t.building.def.name}`;
       case 'shelter': return t.sub === 'in' ? 'Sheltering indoors' : 'Running for refuge!';
       case 'fight': return t.sub === 'go' ? 'Closing on the beast' : 'Fighting off the beast!';
     }
@@ -168,6 +172,7 @@ export class Villager {
     if (this.sheltered) return;
     if (this.task.kind === 'shelter') return;
     if (this.task.kind === 'fight') return;
+    this.leaveWork();
     const refuge = this.nearestRefuge();
     if (refuge) this.task = { kind: 'shelter', building: refuge, sub: 'go' };
     else this.task = { kind: 'fight', bear, sub: 'go' };
@@ -197,24 +202,50 @@ export class Villager {
 
   private die(): void {
     this.alive = false;
+    this.leaveWork();
     this.group.removeFromParent();
     const i = G.villagers.indexOf(this); if (i >= 0) G.villagers.splice(i, 1);
     const s = G.selected.indexOf(this); if (s >= 0) G.selected.splice(s, 1);
   }
 
-  orderAttack(bear: Bear): void { this.task = { kind: 'fight', bear, sub: 'go' }; }
+  orderAttack(bear: Bear): void { this.leaveWork(); this.task = { kind: 'fight', bear, sub: 'go' }; }
 
-  // stop building/approaching a structure that's being demolished
+  // stop building/working/approaching a structure that's being demolished
   releaseFrom(b: Building): void {
-    if (this.task.kind === 'build' && this.task.building === b) this.task = { kind: 'idle' };
+    if (this.workplace === b) this.leaveWork();
+    if ((this.task.kind === 'build' || this.task.kind === 'work') && this.task.building === b) this.task = { kind: 'idle' };
   }
 
-  orderMove(x: number, z: number): void { this.task = { kind: 'move', x, z }; }
+  orderMove(x: number, z: number): void { this.leaveWork(); this.task = { kind: 'move', x, z }; }
   orderGather(node: ResourceNode): void {
+    this.leaveWork();
     if (this.carry > 0 && this.carryKind !== node.kind) this.carry = 0;
     this.task = { kind: 'gather', node, sub: 'go' };
   }
-  orderBuild(b: Building): void { this.task = { kind: 'build', building: b, sub: 'go' }; }
+  orderBuild(b: Building): void { this.leaveWork(); this.task = { kind: 'build', building: b, sub: 'go' }; }
+
+  // assign to a workplace; if its job slots are full, just walk over
+  orderWork(b: Building): void {
+    this.leaveWork();
+    if (b.assignWorker(this)) { this.workplace = b; this.task = { kind: 'work', building: b, sub: 'go' }; }
+    else this.task = { kind: 'move', x: b.x + b.def.radius + 1, z: b.z + b.def.radius + 1 };
+  }
+
+  // give up the current workplace (frees its job slot)
+  leaveWork(): void {
+    if (this.workplace) { this.workplace.removeWorker(this); this.workplace = null; }
+  }
+
+  // recalled from work — free the slot and stand down
+  unassign(): void {
+    this.leaveWork();
+    if (this.task.kind === 'work') this.task = { kind: 'idle' };
+  }
+
+  // is this villager present and working at building b? (drives production)
+  isWorkingAt(b: Building): boolean {
+    return this.task.kind === 'work' && this.task.building === b && this.task.sub === 'in';
+  }
 
   private stepToward(tx: number, tz: number, dt: number): boolean {
     const dx = tx - this.x, dz = tz - this.z;
@@ -320,6 +351,22 @@ export class Villager {
         }
         break;
       }
+      case 'work': {
+        const b = t.building;
+        if (b.phase !== 'done' || G.buildings.indexOf(b) < 0) { this.leaveWork(); this.task = { kind: 'idle' }; break; }
+        if (t.sub === 'go') {
+          const done = this.stepToward(b.x, b.z, dt);
+          const near = (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 1.5) ** 2;
+          if (done || near) { t.sub = 'in'; this.workTimer = 0; }
+        } else {
+          // present at the workplace: a small working sway (production is handled
+          // by the building, which counts present workers)
+          this.workTimer += dt;
+          this.body.rotation.x = Math.sin(this.workTimer * 5) * 0.12;
+          this.group.rotation.y = Math.atan2(b.x - this.x, b.z - this.z);
+        }
+        break;
+      }
       case 'shelter': {
         const b = t.building;
         if (b.phase !== 'done' || G.buildings.indexOf(b) < 0) { this.emerge(); break; }
@@ -358,7 +405,7 @@ export class Villager {
         break;
       }
     }
-    const swinging = (t.kind === 'gather' && t.sub === 'work') || (t.kind === 'fight' && t.sub === 'work');
+    const swinging = (t.kind === 'gather' && t.sub === 'work') || (t.kind === 'fight' && t.sub === 'work') || (t.kind === 'work' && t.sub === 'in');
     if (!swinging) this.body.rotation.x *= 0.8;
   }
 
