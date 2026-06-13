@@ -95,8 +95,26 @@
     #idle-btn:disabled { opacity: 0.4; cursor: default; }
     #idle-btn .dot { width: 10px; height: 10px; border-radius: 50%; background: #9bc47a; display: inline-block; }
 
+    #controls { top: 46px; left: 12px; display: flex; gap: 5px; align-items: center; padding: 5px 8px; }
+    #controls button {
+      background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
+      border-radius: 4px; padding: 3px 8px; font-family: inherit; font-size: 12.5px; cursor: pointer; min-width: 26px;
+    }
+    #controls button:hover { background: #51422d; }
+    #controls button.on { background: var(--accent); color: #2a2113; border-color: var(--accent); }
+    #controls .sep { width: 1px; height: 16px; background: var(--panel-edge); opacity: 0.5; }
+
     #minimap-wrap { right: 12px; bottom: 12px; padding: 6px; }
     #minimap { display: block; cursor: crosshair; border-radius: 3px; }
+
+    #gameover {
+      position: fixed; inset: 0; background: rgba(12, 8, 6, 0.92); z-index: 11;
+      display: none; align-items: center; justify-content: center; text-align: center;
+    }
+    #gameover .inner { max-width: 520px; padding: 30px; }
+    #gameover h1 { font-size: 40px; color: #c0503e; letter-spacing: 3px; margin-bottom: 12px; }
+    #gameover p { font-size: 16px; line-height: 1.5; margin-bottom: 20px; opacity: 0.9; }
+    #gameover button { margin: 0 6px; }
 
     #banner {
       position: absolute; top: 18%; left: 50%; transform: translateX(-50%);
@@ -142,6 +160,15 @@
     <div id="selbox"></div>
     <div id="nodetip"></div>
     <button id="idle-btn" class="panel" title="Select next idle villager (Tab)"><span class="dot"></span>Idle <span id="idle-count">0</span></button>
+    <div id="controls" class="panel">
+      <button id="btn-pause" title="Pause / Resume (Space)">⏸</button>
+      <button id="spd-1" class="spd on" title="Normal speed (1)">1×</button>
+      <button id="spd-2" class="spd" title="Fast (2)">2×</button>
+      <button id="spd-3" class="spd" title="Faster (3)">3×</button>
+      <span class="sep"></span>
+      <button id="btn-save" title="Save game">Save</button>
+      <button id="btn-load" title="Load last save">Load</button>
+    </div>
     <div id="topbar" class="panel">
       <span class="res"><span class="dot wood"></span>Wood <span id="r-wood">0</span></span>
       <span class="res"><span class="dot stone"></span>Stone <span id="r-stone">0</span></span>
@@ -177,6 +204,15 @@
           WASD / arrows / screen-edge — pan &nbsp;·&nbsp; Tab — next idle villager &nbsp;·&nbsp; Wheel — zoom to cursor &nbsp;·&nbsp; Middle-drag or Ctrl+drag — rotate &amp; tilt &nbsp;·&nbsp; Q / E — rotate
         </div>
         <button class="act" id="start-btn">Begin · Anno 1690</button>
+        <button class="act" id="continue-btn" style="display:none; margin-left:10px;">Continue</button>
+      </div>
+    </div>
+    <div id="gameover">
+      <div class="inner">
+        <h1>The Valley Falls Silent</h1>
+        <p id="gameover-text">Your settlement has perished — not a soul remains in Sinaia.</p>
+        <button class="act" id="gameover-load">Load last save</button>
+        <button class="act" id="gameover-restart">Start anew</button>
       </div>
     </div>
   </div>

@@ -34,6 +34,9 @@ export interface GameState {
   selectedBuilding: Building | null;
   paused: boolean;
   time: number;
+  speed: number;      // game-speed multiplier (1 / 2 / 3)
+  started: boolean;   // the intro has been dismissed and play has begun
+  gameOver: boolean;
 }
 
 export const G: GameState = {
@@ -49,6 +52,9 @@ export const G: GameState = {
   selectedBuilding: null,
   paused: true,
   time: 0,
+  speed: 1,
+  started: false,
+  gameOver: false,
 };
 
 export function canAfford(cost: Partial<Record<ResKind, number>>): boolean {

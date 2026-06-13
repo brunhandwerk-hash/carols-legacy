@@ -1077,6 +1077,13 @@ export class Building {
     this.structure.visible = true;
   }
 
+  // restore a partially-built site (used by load)
+  restoreProgress(p: number): void {
+    if (this.phase !== 'site') return;
+    this.progress = Math.max(0, Math.min(p, this.def.buildPoints - 1));
+    this.updateRise();
+  }
+
   private finish(instant: boolean): void {
     this.phase = 'done';
     this.progress = this.def.buildPoints;

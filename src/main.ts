@@ -16,6 +16,7 @@ import { initMinimap, drawMinimap } from './minimap';
 import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus } from './ui';
 import { loadDem, loadBackdrop, lonLatToWorld, setRoads, updateWater } from './terrain';
 import { initWildlife, updateWildlife } from './wildlife';
+import { saveGame, loadGame, hasSave } from './save';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -126,10 +127,18 @@ async function boot(): Promise<void> {
   document.getElementById('start-btn')!.addEventListener('click', () => {
     document.getElementById('intro')!.style.display = 'none';
     G.paused = false;
+    G.started = true;
     const era = ERAS[0];
     showBanner(era.yearLabel, era.introTitle, era.introText);
   });
+  // offer to continue a saved game
+  if (hasSave()) {
+    const cont = document.getElementById('continue-btn')!;
+    cont.style.display = 'inline-block';
+    cont.addEventListener('click', () => { document.getElementById('intro')!.style.display = 'none'; doLoad(); });
+  }
 
+  initControls();
   updateHud();
   requestAnimationFrame(frame);
 
@@ -166,6 +175,71 @@ function initIdleCycler(): void {
   });
 }
 
+// ---- pause / speed controls, save & load ----
+const $ = (id: string): HTMLElement => document.getElementById(id)!;
+
+function setSpeed(n: number): void {
+  G.speed = n;
+  for (const s of [1, 2, 3]) $(`spd-${s}`).classList.toggle('on', s === n);
+}
+
+function togglePause(): void {
+  if (!G.started || G.gameOver) return;
+  G.paused = !G.paused;
+  $('btn-pause').textContent = G.paused ? '▶' : '⏸';
+  $('btn-pause').classList.toggle('on', G.paused);
+}
+
+function doSave(): void {
+  if (!G.started) { toast('Start the game first.'); return; }
+  toast(saveGame() ? 'Game saved.' : 'Could not save.');
+}
+
+function doLoad(): void {
+  if (!loadGame(scene)) { toast('No saved game found.'); return; }
+  G.started = true;
+  G.paused = false;
+  G.gameOver = false;
+  $('gameover').style.display = 'none';
+  setSpeed(G.speed);
+  $('btn-pause').textContent = '⏸';
+  $('btn-pause').classList.remove('on');
+  setSelection([], null);
+  updateHud();
+  refreshObjectives();
+  refreshSelectionPanel();
+  if (G.buildings.length) rig.jumpTo(G.buildings[0].x - 20, G.buildings[0].z - 30);
+  toast('Game loaded.');
+}
+
+function initControls(): void {
+  $('btn-pause').addEventListener('click', togglePause);
+  for (const s of [1, 2, 3]) $(`spd-${s}`).addEventListener('click', () => setSpeed(s));
+  $('btn-save').addEventListener('click', doSave);
+  $('btn-load').addEventListener('click', doLoad);
+  $('gameover-load').addEventListener('click', () => { $('gameover').style.display = 'none'; doLoad(); });
+  $('gameover-restart').addEventListener('click', () => window.location.reload());
+  window.addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement) return;
+    if (e.key === ' ') { e.preventDefault(); togglePause(); }
+    else if (e.key === '1') setSpeed(1);
+    else if (e.key === '2') setSpeed(2);
+    else if (e.key === '3') setSpeed(3);
+  });
+}
+
+let autoSaveTimer = 0;
+
+// the settlement is wiped out — every villager has died (e.g. to bears)
+function checkGameOver(): void {
+  if (G.gameOver || !G.started) return;
+  if (G.popCap > 0 && G.villagers.length === 0) {
+    G.gameOver = true;
+    G.paused = true;
+    $('gameover').style.display = 'flex';
+  }
+}
+
 // ---- main loop ----
 let last = performance.now();
 let hudTimer = 0;
@@ -185,12 +259,19 @@ function tick(now: number): void {
   last = now;
   rig.update(dt);
 
-  if (!G.paused) {
-    G.time += dt;
-    for (const v of G.villagers) v.update(dt);
-    for (const b of G.buildings) b.update(dt, spawnVillager);
-    updateWildlife(dt);
-    updateEras(dt);
+  if (!G.paused && !G.gameOver) {
+    // run the sim `speed` times per frame in small steps, so 2×/3× stays stable
+    const steps = Math.max(1, Math.min(3, Math.round(G.speed)));
+    for (let s = 0; s < steps; s++) {
+      G.time += dt;
+      for (const v of G.villagers) v.update(dt);
+      for (const b of G.buildings) b.update(dt, spawnVillager);
+      updateWildlife(dt);
+      updateEras(dt);
+    }
+    checkGameOver();
+    autoSaveTimer += dt * steps;
+    if (autoSaveTimer > 30) { autoSaveTimer = 0; saveGame(); }
   }
   updateWater(dt);
   if (!G.paused) {
