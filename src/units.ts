@@ -3,6 +3,7 @@ import { terrainHeight, surfaceHeight, walkable } from './terrain';
 import { G, ResourceNode } from './state';
 import { Building, nearestDropoff, gatherBonusAt } from './buildings';
 import { hideNode } from './world';
+import { findPath } from './pathfind';
 import type { Bear } from './wildlife';
 
 type Task =
@@ -88,6 +89,9 @@ export class Villager {
   profession: Profession;
   private workTimer = 0;
   private bobPhase = Math.random() * Math.PI * 2;
+  private path: { x: number; z: number }[] = []; // current nav waypoints
+  private pathI = 0;
+  private navTX = NaN; private navTZ = NaN; // target the path was computed for
 
   constructor(x: number, z: number, scene: THREE.Scene, profession?: Profession) {
     const outfit = profession
@@ -179,7 +183,7 @@ export class Villager {
     if (t.kind === 'work') this.resume = { kind: 'work', b: t.building };
     else if (t.kind === 'gather') this.resume = { kind: 'gather', node: t.node };
     else if (t.kind === 'build') this.resume = { kind: 'build', b: t.building };
-    this.leaveWork();
+    this.leaveWork(); this.clearPath();
     const refuge = this.nearestRefuge();
     if (refuge) this.task = { kind: 'shelter', building: refuge, sub: 'go' };
     else this.task = { kind: 'fight', bear, sub: 'go' };
@@ -235,13 +239,13 @@ export class Villager {
     if ((this.task.kind === 'build' || this.task.kind === 'work') && this.task.building === b) this.task = { kind: 'idle' };
   }
 
-  orderMove(x: number, z: number): void { this.resume = null; this.leaveWork(); this.task = { kind: 'move', x, z }; }
+  orderMove(x: number, z: number): void { this.resume = null; this.leaveWork(); this.clearPath(); this.task = { kind: 'move', x, z }; }
   orderGather(node: ResourceNode): void {
-    this.leaveWork();
+    this.leaveWork(); this.clearPath();
     if (this.carry > 0 && this.carryKind !== node.kind) this.carry = 0;
     this.task = { kind: 'gather', node, sub: 'go' };
   }
-  orderBuild(b: Building): void { this.leaveWork(); this.task = { kind: 'build', building: b, sub: 'go' }; }
+  orderBuild(b: Building): void { this.leaveWork(); this.clearPath(); this.task = { kind: 'build', building: b, sub: 'go' }; }
 
   // a finished construction: if it's a workplace with a free slot, stay on and
   // work it; otherwise stand down
@@ -257,7 +261,7 @@ export class Villager {
 
   // assign to a workplace; if its job slots are full, just walk over
   orderWork(b: Building): void {
-    this.leaveWork();
+    this.leaveWork(); this.clearPath();
     if (b.assignWorker(this)) { this.workplace = b; this.task = { kind: 'work', building: b, sub: 'go' }; }
     else this.task = { kind: 'move', x: b.x + b.def.radius + 1, z: b.z + b.def.radius + 1 };
   }
@@ -308,13 +312,33 @@ export class Villager {
     return false;
   }
 
+  // move toward a (static) destination along an obstacle-avoiding path. Computes
+  // the path once per destination (recomputed only if the target moves), then
+  // walks the waypoints. Returns true on arrival at the final target.
+  private navToward(tx: number, tz: number, dt: number): boolean {
+    if (this.path.length === 0 || (this.navTX - tx) ** 2 + (this.navTZ - tz) ** 2 > 9) {
+      this.navTX = tx; this.navTZ = tz;
+      this.path = findPath(this.x, this.z, tx, tz);
+      this.pathI = 0;
+    }
+    if (this.path.length === 0) return this.stepToward(tx, tz, dt);
+    const wp = this.path[Math.min(this.pathI, this.path.length - 1)];
+    if (this.stepToward(wp.x, wp.z, dt)) {
+      this.pathI++;
+      if (this.pathI >= this.path.length) { this.path = []; this.navTX = NaN; return true; }
+    }
+    return false;
+  }
+
+  private clearPath(): void { this.path = []; this.navTX = NaN; }
+
   update(dt: number): void {
     const t = this.task;
     switch (t.kind) {
       case 'idle':
         break;
       case 'move':
-        if (this.stepToward(t.x, t.z, dt)) this.task = { kind: 'idle' };
+        if (this.navToward(t.x, t.z, dt)) this.task = { kind: 'idle' };
         break;
       case 'gather': {
         if (!t.node.alive) {
@@ -326,7 +350,7 @@ export class Villager {
         if (t.sub === 'go') {
           // stepToward returns true on arrival OR when stuck — only start working
           // if we actually reached the node, otherwise we'd "gather" from afar
-          if (this.stepToward(t.node.x, t.node.z, dt)) {
+          if (this.navToward(t.node.x, t.node.z, dt)) {
             const near = (this.x - t.node.x) ** 2 + (this.z - t.node.z) ** 2 < 4 * 4;
             if (near) { t.sub = 'work'; this.workTimer = 0; }
             else { this.task = { kind: 'idle' }; } // blocked — can't reach this node
@@ -350,7 +374,7 @@ export class Villager {
           if (!drop) { this.task = { kind: 'idle' }; break; }
           this.carryMesh.visible = true;
           this.carryMesh.material = carryMats[this.carryKind];
-          if (this.stepToward(drop.x, drop.z, dt) ||
+          if (this.navToward(drop.x, drop.z, dt) ||
               (this.x - drop.x) ** 2 + (this.z - drop.z) ** 2 < (drop.def.radius + 2) ** 2) {
             G.resources[this.carryKind] += this.carry;
             this.carry = 0;
@@ -368,7 +392,7 @@ export class Villager {
         const b = t.building;
         if (b.phase === 'done') { this.afterBuild(b); break; }
         if (t.sub === 'go') {
-          const done = this.stepToward(b.x, b.z, dt);
+          const done = this.navToward(b.x, b.z, dt);
           const near = (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 2.5) ** 2;
           if (done || near) { t.sub = 'work'; this.workTimer = 0; }
         } else {
@@ -383,7 +407,7 @@ export class Villager {
         const b = t.building;
         if (b.phase !== 'done' || G.buildings.indexOf(b) < 0) { this.leaveWork(); this.task = { kind: 'idle' }; break; }
         if (t.sub === 'go') {
-          const done = this.stepToward(b.x, b.z, dt);
+          const done = this.navToward(b.x, b.z, dt);
           const near = (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 1.5) ** 2;
           if (done || near) { t.sub = 'in'; this.workTimer = 0; }
         } else {
@@ -399,7 +423,7 @@ export class Villager {
         const b = t.building;
         if (b.phase !== 'done' || G.buildings.indexOf(b) < 0) { this.emerge(); break; }
         if (t.sub === 'go') {
-          const arrived = this.stepToward(b.x, b.z, dt) ||
+          const arrived = this.navToward(b.x, b.z, dt) ||
             (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 1.5) ** 2;
           if (arrived) { t.sub = 'in'; this.sheltered = true; this.group.visible = false; this.shelterTimer = 0; }
         } else {
