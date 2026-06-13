@@ -241,6 +241,7 @@ function checkGameOver(): void {
 }
 
 // ---- main loop ----
+const SIM_SCALE = 0.5; // global game-pace factor (half-speed base)
 let last = performance.now();
 let hudTimer = 0;
 let mapTimer = 0;
@@ -260,17 +261,19 @@ function tick(now: number): void {
   rig.update(dt);
 
   if (!G.paused && !G.gameOver) {
-    // run the sim `speed` times per frame in small steps, so 2×/3× stays stable
+    // overall game pace: the sim runs at half real-time at 1×, so the world feels
+    // calmer. The 1/2/3 buttons still scale on top (1× = 0.5, 2× = 1.0, 3× = 1.5).
     const steps = Math.max(1, Math.min(3, Math.round(G.speed)));
+    const sdt = dt * SIM_SCALE;
     for (let s = 0; s < steps; s++) {
-      G.time += dt;
-      for (const v of G.villagers) v.update(dt);
-      for (const b of G.buildings) b.update(dt, spawnVillager);
-      updateWildlife(dt);
-      updateEras(dt);
+      G.time += sdt;
+      for (const v of G.villagers) v.update(sdt);
+      for (const b of G.buildings) b.update(sdt, spawnVillager);
+      updateWildlife(sdt);
+      updateEras(sdt);
     }
     checkGameOver();
-    autoSaveTimer += dt * steps;
+    autoSaveTimer += sdt * steps;
     if (autoSaveTimer > 30) { autoSaveTimer = 0; saveGame(); }
   }
   updateWater(dt);
