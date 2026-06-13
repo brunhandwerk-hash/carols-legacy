@@ -83,20 +83,9 @@ async function boot(): Promise<void> {
   START.camp.x = camp.x;
   START.camp.z = camp.z;
 
-  // historical roads as polylines between the real landmark sites
-  const P = (key: string): [number, number] => {
-    const p = plotByKey(key);
-    return [p.x, p.z];
-  };
-  setRoads([
-    [[camp.x, camp.z], P('townhall'), P('palace'), P('monastery')],
-    [P('monastery'), P('furnica'), P('economat'), P('cavalerilor'), P('guard'), P('peles')],
-    [P('guard'), P('pelisor')],
-    [P('pelisor'), P('foisor')],
-    [P('palace'), P('casino'), P('caraiman'), P('station')],
-    [P('townhall'), P('villa2'), P('villa3')],
-    [P('station'), P('villa1')],
-  ]);
+  // no pre-built roads — the player lays roads themselves. (The road system
+  // stays in place for that; we just start with an empty network.)
+  setRoads([]);
 
   const world = buildWorld(scene);
 
