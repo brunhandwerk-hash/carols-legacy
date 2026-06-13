@@ -23,7 +23,8 @@ const BEAR_BITE_INTERVAL = 1.0;
 const BEAR_LEASH = 340;        // keep chasing one victim until it dies or escapes this far
 const BEAR_LIFETIME = 80;      // seconds before it gives up and retreats
 
-const FIRST_ATTACK_AT = 75;    // no bears in the very first minutes
+const FIRST_ATTACK_AT = 270;   // ~4.5 min of peace before the first bear
+const SPAWN_MIN = 240, SPAWN_MAX = 420; // then a raid every 4–7 min
 let spawnTimer = FIRST_ATTACK_AT;
 let sceneRef: THREE.Scene | null = null;
 let firstWarning = true;
@@ -256,7 +257,7 @@ export function updateWildlife(dt: number): void {
   // periodic attacks, scaling slightly once the settlement is worth raiding
   spawnTimer -= dt;
   if (spawnTimer <= 0 && G.villagers.length >= 3) {
-    spawnTimer = 70 + Math.random() * 60;
+    spawnTimer = SPAWN_MIN + Math.random() * (SPAWN_MAX - SPAWN_MIN);
     spawnWave();
   }
 
