@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { START } from './config';
-import { buildWorld, updateForestLOD } from './world';
+import { buildWorld, updateForestReveal } from './world';
 import { G } from './state';
 import { Building, setOnBuildingComplete } from './buildings';
 import { Villager } from './units';
@@ -178,7 +178,7 @@ function tick(now: number): void {
   if (mapTimer > 0.25) {
     mapTimer = 0;
     drawMinimap(rig.target, rig.yaw, rig.dist * 1.6);
-    updateForestLOD(rig.target.x, rig.target.z);
+    updateForestReveal();
   }
 
   renderer.render(scene, camera);

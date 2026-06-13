@@ -63,7 +63,7 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
 }
 
 // Bake a dark forest-floor green into the terrain vertex colours wherever the
-// forest grows. Distant chunks render no tree geometry (see updateForestLOD), so
+// forest grows. Distant chunks render no tree geometry (see updateForestReveal), so
 // this tint is what makes the far valley still read as deep forest instead of
 // bright meadow — at a fraction of the draw cost.
 function paintForestFloor(terrain: THREE.Mesh): void {
@@ -104,19 +104,29 @@ const CLEARING_GEOS = [
 
 let clearings: { x: number; z: number; r: number }[] = [];
 
-// forest level-of-detail: only chunks within LOD_DIST of the camera render their
-// trees as geometry. Everything beyond is just the dark-green forest floor that
-// `paintForestFloor` bakes into the terrain colours — no distant tree meshes, to
-// keep the draw load light.
+// Forest geometry is drawn only where there's activity — within REVEAL of a
+// building, a road, or a villager. Everywhere else is just the dark-green forest
+// floor that `paintForestFloor` bakes into the terrain colours, so the wilderness
+// costs nothing to draw. Reveal follows the settlement and its people, NOT the
+// camera, so simply looking around never spawns distant tree meshes.
 interface ForestChunk { cx: number; cz: number; near: THREE.InstancedMesh }
 const forestChunks: ForestChunk[] = [];
-const LOD_DIST = 1500;
+const REVEAL = 430; // metres from a chunk centre to any activity to show its trees
 
-export function updateForestLOD(camX: number, camZ: number): void {
+export function updateForestReveal(): void {
   for (const c of forestChunks) {
-    const d2 = (c.cx - camX) ** 2 + (c.cz - camZ) ** 2;
-    const isNear = d2 < LOD_DIST * LOD_DIST;
-    if (c.near.visible !== isNear) c.near.visible = isNear;
+    let show = roadDistance(c.cx, c.cz) < REVEAL;
+    if (!show) {
+      for (const b of G.buildings) {
+        if ((b.x - c.cx) ** 2 + (b.z - c.cz) ** 2 < REVEAL * REVEAL) { show = true; break; }
+      }
+    }
+    if (!show) {
+      for (const v of G.villagers) {
+        if ((v.x - c.cx) ** 2 + (v.z - c.cz) ** 2 < REVEAL * REVEAL) { show = true; break; }
+      }
+    }
+    if (c.near.visible !== show) c.near.visible = show;
   }
 }
 
@@ -198,7 +208,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const treeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const HARVEST_MAX_H = 420;
   const SPACING = 9;
-  const CHUNK = 1024;
+  const CHUNK = 512; // smaller chunks so the activity-based reveal reads as a radius
   const FILL = 0.8;
   let totalTrees = 0;
 
@@ -234,7 +244,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
       const mesh = new THREE.InstancedMesh(treeGeo, treeMat, spots.length);
       mesh.castShadow = false;
       mesh.raycast = () => {};
-      mesh.visible = false; // updateForestLOD shows it only when near the camera
+      mesh.visible = false; // updateForestReveal shows it only near activity
       spots.forEach((s, i) => {
         dummy.position.set(s.x, s.h, s.z);
         dummy.scale.setScalar(0.85 + crng() * 0.8);

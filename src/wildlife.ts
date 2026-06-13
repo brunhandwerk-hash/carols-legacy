@@ -14,10 +14,12 @@ import { toast, showBanner } from './ui';
 // ---------------------------------------------------------------------------
 
 const BEAR_HP = 70;
-const BEAR_SPEED = 15;
+const BEAR_SPEED = 18.6;       // a shade faster than a fleeing villager (18) so a
+                               // persistent bear runs its quarry down over time
 const BEAR_CONTACT = 3.6;      // metres at which a bear can maul its target
-const BEAR_DMG = 10;           // damage per bite
+const BEAR_DMG = 10;           // damage per bite — ~4 bites kills a 40 hp villager
 const BEAR_BITE_INTERVAL = 1.0;
+const BEAR_LEASH = 340;        // keep chasing one victim until it dies or escapes this far
 const BEAR_LIFETIME = 80;      // seconds before it gives up and retreats
 
 const FIRST_ATTACK_AT = 75;    // no bears in the very first minutes
@@ -162,21 +164,25 @@ export class Bear {
       return;
     }
 
-    // chase the nearest villager; maul it on contact
-    this.target = this.nearestVillager();
+    // commit to one victim — only re-pick when it's dead or has escaped the leash
+    // — so a determined bear actually runs someone down instead of dithering
+    if (!this.target || !this.target.alive ||
+        (this.target.x - this.x) ** 2 + (this.target.z - this.z) ** 2 > BEAR_LEASH * BEAR_LEASH) {
+      this.target = this.nearestVillager();
+    }
     if (!this.target) { this.state = 'leave'; return; }
-    const d2 = (this.target.x - this.x) ** 2 + (this.target.z - this.z) ** 2;
-    if (d2 > BEAR_CONTACT * BEAR_CONTACT) {
-      this.stepToward(this.target.x, this.target.z, dt);
-      this.biteTimer = 0;
-    } else {
-      this.group.rotation.y = Math.atan2(this.target.x - this.x, this.target.z - this.z);
-      this.biteTimer += dt;
+    const tx = this.target.x, tz = this.target.z;
+    const d = Math.hypot(tx - this.x, tz - this.z);
+    // stay glued to the victim — keep closing even at point-blank range so a
+    // fleeing villager can't break contact between bites and run forever
+    if (d > BEAR_CONTACT * 0.6) this.stepToward(tx, tz, dt);
+    else this.group.rotation.y = Math.atan2(tx - this.x, tz - this.z);
+    if (d <= BEAR_CONTACT) {
       this.target.panic(this.x, this.z); // make it bolt
-      if (this.biteTimer >= BEAR_BITE_INTERVAL) {
-        this.biteTimer = 0;
-        this.target.takeDamage(BEAR_DMG);
-      }
+      this.biteTimer += dt;
+      if (this.biteTimer >= BEAR_BITE_INTERVAL) { this.biteTimer = 0; this.target.takeDamage(BEAR_DMG); }
+    } else {
+      this.biteTimer = Math.max(0, this.biteTimer - dt * 0.5); // decay, don't hard reset
     }
   }
 }
