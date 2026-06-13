@@ -215,6 +215,7 @@ export function buildTerrainMesh(): THREE.Mesh {
   const snowC = new THREE.Color(PALETTE.snow);
   const dirt = new THREE.Color(PALETTE.dirt);
   const waterC = new THREE.Color(0x3a6f8c); // river-bed tint, so the course reads on the ground itself
+  const bankC = new THREE.Color(0x4c5a34);  // damp, darker-green riverbank (not a tan path)
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -231,8 +232,8 @@ export function buildTerrainMesh(): THREE.Mesh {
     // the Prahova: a clear blue river-bed band, fading to muddy banks, painted
     // into the ground so the course is obvious even where the water plane is subtle
     const rd = Math.abs(x - riverX(z));
-    if (rd < 24) c.lerp(waterC, (1 - rd / 24) * 0.92);
-    else if (rd < 44) c.lerp(dirt, (1 - (rd - 24) / 20) * 0.5);
+    if (rd < 12) c.lerp(waterC, (1 - rd / 12) * 0.6);        // wet bed under the water ribbon
+    else if (rd < 24) c.lerp(bankC, (1 - (rd - 12) / 12) * 0.45); // damp grassy banks (no tan path)
     const road = roadDistance(x, z);
     if (road < 5) c.lerp(dirt, (1 - road / 5) * 0.85);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
@@ -393,9 +394,9 @@ export function buildBackdropMesh(): THREE.Mesh | null {
 }
 
 export function buildRiverMesh(): THREE.Mesh {
-  const steps = 360;
-  const halfW = 24;  // a generous, clearly visible channel
-  const lift = 2.2;  // water level above the valley floor; terrain naturally clips the edges
+  const steps = 380;
+  const halfW = 11;  // a clean, consistent ~22 m channel
+  const lift = 0.4;
   const verts: number[] = [];
   const uvs: number[] = [];
   const idx: number[] = [];
@@ -404,15 +405,17 @@ export function buildRiverMesh(): THREE.Mesh {
   for (let i = 0; i <= steps; i++) {
     const z = MAP.minZ + (i / steps) * MAP.depth;
     const x = riverX(z);
-    // A FLAT water surface per row, set just above the *rendered* valley floor
-    // (surfaceHeight, not the full-res rawHeight which sits below the coarse
-    // mesh and vanishes). The flat sheet fills the channel; where the banks rise
-    // above the waterline the terrain clips the edges — so it reads as a river.
-    const y = surfaceHeight(x, z) + lift;
+    // A consistent-width ribbon draped on the *rendered* surface (surfaceHeight,
+    // not the buried rawHeight) — like a blue road. Each edge hugs the terrain,
+    // so the band is even and clean instead of a ragged flat sheet clipped by the
+    // coarse mesh.
+    const lx = x - halfW, rx = x + halfW;
+    const ly = surfaceHeight(lx, z) + lift;
+    const ry = surfaceHeight(rx, z) + lift;
     if (i > 0) cum += Math.hypot(x - px, z - pz);
     px = x; pz = z;
-    verts.push(x - halfW, y, z, x + halfW, y, z);
-    const v = cum / 26;
+    verts.push(lx, ly, z, rx, ry, z);
+    const v = cum / 22;
     uvs.push(0, v, 1, v);
     if (i < steps) {
       const a = i * 2;

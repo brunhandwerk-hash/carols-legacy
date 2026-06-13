@@ -319,12 +319,12 @@ export function waterMaterial(base = 0x2f6d86, seed = 91): THREE.MeshStandardMat
   const mat = new THREE.MeshStandardMaterial({
     map: tex.map,
     normalMap: tex.normalMap,
-    normalScale: new THREE.Vector2(0.6, 0.6),
-    color: 0x4f9ec2,   // a clearer river blue (less sky-mirror, reads as water)
-    roughness: 0.32,
-    metalness: 0.1,
+    normalScale: new THREE.Vector2(0.22, 0.22), // subtle ripples, no iridescent glare
+    color: 0x4a93b8,   // river blue
+    roughness: 0.5,
+    metalness: 0.0,    // matte water — avoids the rainbow sky-reflection artefact
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.88,
   });
   return mat;
 }

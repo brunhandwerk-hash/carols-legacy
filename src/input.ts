@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MAP } from './config';
-import { terrainHeight, terrainSlope, inRiver, inMap, riverX } from './terrain';
+import { terrainHeight, terrainSlope, inMap, riverX } from './terrain';
 import { G, canAfford, pay } from './state';
 import { Building, DEFS } from './buildings';
 import type { Villager } from './units';
@@ -105,8 +105,11 @@ export function initInput(
     ghost.mesh.position.set(p.x, terrainHeight(p.x, p.z), p.z);
     const def = DEFS[ghost.key];
     // buildings terrace their own ground (see Building.addFoundation), so they can
-    // sit on fairly steep slopes — only true cliffs and the river are off-limits
-    let valid = inMap(p.x, p.z) && !inRiver(p.x, p.z) && terrainSlope(p.x, p.z) < 0.95;
+    // sit on fairly steep slopes — only true cliffs and the river are off-limits.
+    // Keep the whole footprint out of the river channel; bridges may cross it.
+    const riverDist = Math.abs(p.x - riverX(p.z));
+    const riverOk = def.noFoundation || riverDist > 13 + def.radius;
+    let valid = inMap(p.x, p.z) && riverOk && terrainSlope(p.x, p.z) < 0.95;
     if (valid) {
       for (const b of G.buildings) {
         const d2 = (b.x - p.x) ** 2 + (b.z - p.z) ** 2;
