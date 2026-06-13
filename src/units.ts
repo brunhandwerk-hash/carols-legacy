@@ -224,6 +224,18 @@ export class Villager {
   }
   orderBuild(b: Building): void { this.leaveWork(); this.task = { kind: 'build', building: b, sub: 'go' }; }
 
+  // a finished construction: if it's a workplace with a free slot, stay on and
+  // work it; otherwise stand down
+  private afterBuild(b: Building): void {
+    this.body.rotation.x = 0;
+    if (b.def.jobSlots && b.assignWorker(this)) {
+      this.workplace = b;
+      this.task = { kind: 'work', building: b, sub: 'go' };
+    } else {
+      this.task = { kind: 'idle' };
+    }
+  }
+
   // assign to a workplace; if its job slots are full, just walk over
   orderWork(b: Building): void {
     this.leaveWork();
@@ -335,7 +347,7 @@ export class Villager {
       }
       case 'build': {
         const b = t.building;
-        if (b.phase === 'done') { this.task = { kind: 'idle' }; break; }
+        if (b.phase === 'done') { this.afterBuild(b); break; }
         if (t.sub === 'go') {
           const done = this.stepToward(b.x, b.z, dt);
           const near = (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 2.5) ** 2;
@@ -344,10 +356,7 @@ export class Villager {
           this.workTimer += dt;
           this.body.rotation.x = Math.sin(this.workTimer * 8) * 0.2;
           if (b.phase === 'planned') { this.task = { kind: 'idle' }; break; }
-          if (b.addWork(dt * 4)) { // 4 build points/sec per villager
-            this.body.rotation.x = 0;
-            this.task = { kind: 'idle' };
-          }
+          if (b.addWork(dt * 4)) this.afterBuild(b); // 4 build points/sec per villager
         }
         break;
       }
