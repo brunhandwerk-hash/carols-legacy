@@ -180,6 +180,52 @@ export function stoneMaterial(base = 0x9a958c, seed = 23): THREE.MeshStandardMat
   return pbr(tex, 0.95, 1.5, 1.4);
 }
 
+// A coursed-masonry retaining wall. Because terrace walls vary wildly in size
+// (a 4 m hut pad vs a 40 m monastery terrace), a fixed texture repeat would
+// stretch the blocks. We generate the masonry texture ONCE, then per wall clone
+// the textures (sharing the canvas, cheap) and set a repeat derived from the
+// wall's real circumference/height so blocks stay ~1.4 m everywhere.
+let WALL_TEX: { map: THREE.CanvasTexture; normalMap: THREE.CanvasTexture } | null = null;
+function wallTex(): { map: THREE.CanvasTexture; normalMap: THREE.CanvasTexture } {
+  if (WALL_TEX) return WALL_TEX;
+  const c = new THREE.Color(0x8f897e);
+  const bw = 30, bh = 16; // big quarried blocks
+  WALL_TEX = buildSurface({
+    seed: 27, size: 256,
+    height: (x, y, n) => {
+      const row = Math.floor(y / bh);
+      const offX = (row % 2) * (bw / 2);
+      const inMortar = ((x + offX) % bw) < 3.5 || (y % bh) < 3.5;
+      return inMortar ? 0.12 : 0.62 + 0.38 * n(x * 1.3, y * 1.3);
+    },
+    color: (x, y, _h, n) => {
+      const row = Math.floor(y / bh);
+      const offX = (row % 2) * (bw / 2);
+      const inMortar = ((x + offX) % bw) < 3.5 || (y % bh) < 3.5;
+      if (inMortar) return [120, 114, 104];
+      const v = n(x * 1.9 + row * 5, y * 1.9);
+      const shade = mix(0.7, 1.16, v);
+      return [c.r * 255 * shade, c.g * 255 * shade, c.b * 255 * shade];
+    },
+    normalStrength: 4.0,
+  });
+  return WALL_TEX;
+}
+
+export function retainingWallMaterial(circumference: number, height: number): THREE.MeshStandardMaterial {
+  const t = wallTex();
+  const block = 1.4; // metres per texture tile
+  const rx = Math.max(3, Math.round(circumference / block));
+  const ry = Math.max(1, Math.round(height / block));
+  const map = t.map.clone(); map.needsUpdate = true;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping; map.repeat.set(rx, ry); map.anisotropy = 4;
+  const normalMap = t.normalMap.clone(); normalMap.needsUpdate = true;
+  normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping; normalMap.repeat.set(rx, ry);
+  return new THREE.MeshStandardMaterial({
+    map, normalMap, normalScale: new THREE.Vector2(1.6, 1.6), roughness: 0.96, metalness: 0,
+  });
+}
+
 // thatch / straw roof: directional strands
 export function thatchMaterial(base = 0xb09455, seed = 31): THREE.MeshStandardMaterial {
   const c = new THREE.Color(base);
@@ -252,6 +298,35 @@ export function cobbleMaterial(base = 0x8c8a86, seed = 83): THREE.MeshStandardMa
     normalStrength: 3.4,
   });
   return pbr(tex, 0.93, 1, 1.4);
+}
+
+// flowing river water: a rippled normal map over a translucent blue albedo.
+// Reflective (low roughness, slight metalness) so the env map paints sky onto it
+// and it reads clearly as water. Animate by scrolling normalMap.offset each frame.
+export function waterMaterial(base = 0x2f6d86, seed = 91): THREE.MeshStandardMaterial {
+  const c = new THREE.Color(base);
+  const tex = buildSurface({
+    seed,
+    height: (x, y, n) => 0.5 + 0.5 * (0.6 * n(x * 0.5, y * 1.4) + 0.4 * Math.sin((x + n(x, y) * 30) * 0.13)),
+    color: (x, y, h, n) => {
+      const shade = mix(0.82, 1.18, h * 0.5 + n(x, y) * 0.5);
+      return [c.r * 255 * shade, c.g * 255 * shade, c.b * 255 * shade];
+    },
+    normalStrength: 1.5,
+  });
+  tex.map.repeat.set(6, 22);
+  tex.normalMap.repeat.set(6, 22);
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex.map,
+    normalMap: tex.normalMap,
+    normalScale: new THREE.Vector2(0.55, 0.55),
+    color: 0x9fc7d6,
+    roughness: 0.12,
+    metalness: 0.35,
+    transparent: true,
+    opacity: 0.82,
+  });
+  return mat;
 }
 
 // packed earth / dirt

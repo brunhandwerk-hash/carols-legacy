@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { MAP } from './config';
-import { terrainHeight, terrainSlope, inRiver, inMap } from './terrain';
+import { terrainHeight, terrainSlope, inRiver, inMap, riverX } from './terrain';
 import { G, canAfford, pay } from './state';
 import { Building, DEFS } from './buildings';
 import type { Villager } from './units';
+import type { Bear } from './wildlife';
 import { nodeFromInstance, nearestHarvestable, hideNode, WorldRefs } from './world';
 import { setSelection, refreshSelectionPanel, setGhostRequest, toast, showNodeTip, hideNodeTip } from './ui';
 
@@ -128,7 +129,13 @@ export function initInput(
       if (!n.alive) continue;
       if ((n.x - x) ** 2 + (n.z - z) ** 2 < (def.radius + 2) ** 2) { n.alive = false; hideNode(n); }
     }
-    const b = new Building(ghost.key, x, z, 'site', world.scene, Math.random() * Math.PI * 2);
+    // most buildings get a random yaw; a bridge auto-orients to span the river
+    let rotY = Math.random() * Math.PI * 2;
+    if (ghost.key === 'bridge') {
+      const dXdZ = (riverX(z + 8) - riverX(z - 8)) / 16;
+      rotY = Math.atan2(dXdZ, 1);
+    }
+    const b = new Building(ghost.key, x, z, 'site', world.scene, rotY);
     for (const v of G.selected) v.orderBuild(b);
     cancelGhost();
     refreshSelectionPanel();
@@ -264,6 +271,13 @@ export function initInput(
     if (G.selected.length === 0) return;
     const hits = raycastAt(cx, cy, world.scene.children);
     for (const h of hits) {
+      // a bear? send the selected villagers to drive it off
+      const bear = h.object.userData.bear as Bear | undefined;
+      if (bear && bear.alive) {
+        for (const v of G.selected) v.orderAttack(bear);
+        toast('Villagers move to drive off the bear!');
+        return;
+      }
       // resource node?
       if (h.object instanceof THREE.InstancedMesh && h.instanceId !== undefined) {
         const node = nodeFromInstance(h.object, h.instanceId);

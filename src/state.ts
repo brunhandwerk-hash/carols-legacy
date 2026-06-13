@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import type { Villager } from './units';
 import type { Building } from './buildings';
+import type { Bear } from './wildlife';
 
 export type ResKind = 'wood' | 'stone' | 'food' | 'coin';
 
@@ -27,6 +28,7 @@ export interface GameState {
   year: number;
   villagers: Villager[];
   buildings: Building[];
+  bears: Bear[];
   nodes: ResourceNode[];
   selected: Villager[];
   selectedBuilding: Building | null;
@@ -41,6 +43,7 @@ export const G: GameState = {
   year: 1690,
   villagers: [],
   buildings: [],
+  bears: [],
   nodes: [],
   selected: [],
   selectedBuilding: null,

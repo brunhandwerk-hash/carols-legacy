@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MAP, PALETTE } from './config';
-import { cobbleMaterial } from './materials';
+import { cobbleMaterial, waterMaterial } from './materials';
 
 // ---- real-world digital elevation model (public/dem.bin, see scripts/fetch-dem.mjs) ----
 // World coords: x east (m), z south (m), origin at the bbox centre. Heights in
@@ -283,16 +283,34 @@ export function buildRoadMesh(): THREE.Mesh {
   return mesh;
 }
 
+let waterMat: THREE.MeshStandardMaterial | null = null;
+
+// scroll the ripple normal map downstream so the water reads as flowing
+export function updateWater(dt: number): void {
+  if (!waterMat || !waterMat.normalMap) return;
+  waterMat.normalMap.offset.y = (waterMat.normalMap.offset.y + dt * 0.06) % 1;
+  waterMat.map!.offset.y = (waterMat.map!.offset.y + dt * 0.03) % 1;
+}
+
 export function buildRiverMesh(): THREE.Mesh {
-  const steps = 300;
-  const halfW = 14;
+  const steps = 320;
+  const halfW = 17;
   const verts: number[] = [];
+  const uvs: number[] = [];
   const idx: number[] = [];
+  let cum = 0;
+  let px = 0, pz = 0;
   for (let i = 0; i <= steps; i++) {
     const z = MAP.minZ + (i / steps) * MAP.depth;
     const x = riverX(z);
-    const y = rawHeight(x, z) + 1.5;
+    // sit just above the carved valley floor; the reflective PBR water catches
+    // the sky so the channel reads clearly even where the banks are shallow
+    const y = rawHeight(x, z) + 1.2;
+    if (i > 0) cum += Math.hypot(x - px, z - pz);
+    px = x; pz = z;
     verts.push(x - halfW, y, z, x + halfW, y, z);
+    const v = cum / 26;
+    uvs.push(0, v, 1, v);
     if (i < steps) {
       const a = i * 2;
       idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -300,12 +318,12 @@ export function buildRiverMesh(): THREE.Mesh {
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
-  const mat = new THREE.MeshLambertMaterial({
-    color: PALETTE.water, transparent: true, opacity: 0.85,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
+  if (!waterMat) waterMat = waterMaterial();
+  const mesh = new THREE.Mesh(geo, waterMat);
+  mesh.renderOrder = 1; // draw the translucent water after the terrain
   mesh.name = 'river';
   return mesh;
 }

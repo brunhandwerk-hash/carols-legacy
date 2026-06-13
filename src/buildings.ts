@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { surfaceHeight } from './terrain';
 import { G, ResKind, RES_KINDS, GatherKind, pay, canAfford } from './state';
-import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial } from './materials';
+import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial, retainingWallMaterial } from './materials';
 
 export type BuildingPhase = 'planned' | 'site' | 'done';
 
@@ -19,6 +19,9 @@ export interface BuildingDef {
   coinTrickle?: number; // coin per second when complete (offerings, tolls)
   boosts?: GatherKind;  // speeds up gathering of this kind within boostRange
   boostRange?: number;  // metres
+  defendRange?: number; // metres — auto-damages wild animals within this radius
+  defendDps?: number;   // damage per second dealt to animals in defendRange
+  noFoundation?: boolean; // skip the terraced stone foundation (e.g. bridges)
   build: (g: THREE.Group) => void;
 }
 
@@ -57,6 +60,15 @@ const M = {
   grass: new THREE.MeshStandardMaterial({ color: 0x83a154, roughness: 0.95, metalness: 0 }),
   glass: new THREE.MeshStandardMaterial({ color: 0x2e3b40, roughness: 0.15, metalness: 0.1, emissive: 0x20303a, emissiveIntensity: 0.35 }),
   fire: new THREE.MeshBasicMaterial({ color: 0xe8853a }),
+  // ---- props / clutter -------------------------------------------------
+  iron: new THREE.MeshStandardMaterial({ color: 0x80868d, metalness: 0.7, roughness: 0.42 }),
+  sack: new THREE.MeshStandardMaterial({ color: 0xc8b187, roughness: 0.96, metalness: 0 }),
+  cloth: new THREE.MeshStandardMaterial({ color: 0xb24a3c, roughness: 0.9, metalness: 0 }),
+  lamp: new THREE.MeshStandardMaterial({ color: 0xffe2a8, emissive: 0xffa53a, emissiveIntensity: 1.3, roughness: 0.5 }),
+  hay: new THREE.MeshStandardMaterial({ color: 0xc9a84e, roughness: 0.97, metalness: 0 }),
+  cowHide: new THREE.MeshStandardMaterial({ color: 0xe9e2d2, roughness: 0.85, metalness: 0 }),
+  cowSpot: new THREE.MeshStandardMaterial({ color: 0x4a3a2c, roughness: 0.85, metalness: 0 }),
+  milk: new THREE.MeshStandardMaterial({ color: 0xf3f0e6, roughness: 0.4, metalness: 0 }),
 };
 
 ERA_STYLES = [
@@ -140,6 +152,211 @@ function cross(x: number, y: number, z: number): THREE.Group {
   return g;
 }
 
+// ---------------------------------------------------------------------------
+// Yard props: small procedural clutter scattered around buildings so they read
+// as worked, lived-in places (à la Foundation / Manor Lords) rather than bare
+// boxes. None are era-tagged, so they keep their own materials across ages.
+// All are positioned in the building's local space (origin at the footprint
+// centre, y=0 at the platform).
+// ---------------------------------------------------------------------------
+
+// a hooped wooden barrel
+function barrel(x: number, z: number, s = 1): THREE.Group {
+  const g = new THREE.Group();
+  const body = cylinder(0.34 * s, 0.8 * s, M.log, 0, 0, 0);
+  g.add(body);
+  for (const hy of [0.14, 0.62]) {
+    const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.355 * s, 0.04 * s, 5, 14), M.iron);
+    hoop.position.y = hy * s; hoop.rotation.x = Math.PI / 2;
+    hoop.castShadow = true;
+    g.add(hoop);
+  }
+  g.position.set(x, 0, z);
+  return g;
+}
+
+// a planked crate with corner battens
+function crate(x: number, z: number, rot = 0, s = 1): THREE.Group {
+  const g = new THREE.Group();
+  g.add(box(0.66 * s, 0.62 * s, 0.66 * s, M.shingle, 0, 0, 0));
+  for (const sx of [-1, 1] as const) for (const sz of [-1, 1] as const)
+    g.add(box(0.08 * s, 0.66 * s, 0.08 * s, M.logDark, sx * 0.33 * s, 0, sz * 0.33 * s));
+  g.position.set(x, 0, z); g.rotation.y = rot;
+  return g;
+}
+
+// a plump burlap sack
+function sack(x: number, z: number, color = M.sack): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), color);
+  m.scale.set(1, 1.35, 1);
+  m.position.set(x, 0.38, z);
+  m.castShadow = true;
+  return m;
+}
+
+// a pile of cross-stacked logs (firewood), ridge running along local z
+function woodpile(x: number, z: number, rot = 0, len = 2.2): THREE.Group {
+  const g = new THREE.Group();
+  const r = 0.17;
+  const rows: [number, number][] = [[-2, 0], [0, 0], [2, 0], [-1, 1], [1, 1], [0, 2]];
+  for (const [ox, oy] of rows) {
+    const l = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 7), oy % 2 ? M.logDark : M.log);
+    l.rotation.z = Math.PI / 2;
+    l.position.set(ox * r, r + oy * r * 1.72, 0);
+    l.castShadow = true;
+    g.add(l);
+  }
+  g.position.set(x, 0, z); g.rotation.y = rot;
+  return g;
+}
+
+// a neat stack of sawn planks
+function plankStack(x: number, z: number, rot = 0): THREE.Group {
+  const g = new THREE.Group();
+  for (let i = 0; i < 5; i++) g.add(box(0.34, 0.06, 2.0, M.shingle, (i % 2) * 0.02, 0.07 * i, 0));
+  g.position.set(x, 0, z); g.rotation.y = rot;
+  return g;
+}
+
+// a chopping stump with an axe sunk into the top
+function choppingBlock(x: number, z: number): THREE.Group {
+  const g = new THREE.Group();
+  const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.46, 0.72, 11), M.logDark);
+  stump.position.y = 0.36; stump.castShadow = true; g.add(stump);
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.95, 6), M.log);
+  haft.position.set(0.06, 0.96, 0); haft.rotation.z = 0.5; g.add(haft);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.26, 0.36), M.iron);
+  head.position.set(0.3, 1.2, 0); head.rotation.z = 0.5; head.castShadow = true; g.add(head);
+  g.position.set(x, 0, z);
+  return g;
+}
+
+// an A-leg sawhorse / trestle
+function sawhorse(x: number, z: number, rot = 0): THREE.Group {
+  const g = new THREE.Group();
+  g.add(box(0.16, 0.16, 1.6, M.log, 0, 0.66, 0));
+  for (const sx of [-1, 1] as const) for (const sz of [-0.55, 0.55]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 5), M.logDark);
+    leg.position.set(sx * 0.28, 0.4, sz);
+    leg.rotation.z = sx * 0.28;
+    leg.castShadow = true;
+    g.add(leg);
+  }
+  g.position.set(x, 0, z); g.rotation.y = rot;
+  return g;
+}
+
+// a small wooden bucket
+function bucket(x: number, z: number): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.17, 0.4, 9), M.logDark);
+  m.position.set(x, 0.2, z); m.castShadow = true;
+  return m;
+}
+
+// a split-rail fence between two local points
+function fenceRun(x1: number, z1: number, x2: number, z2: number, posts = 4): THREE.Group {
+  const g = new THREE.Group();
+  for (let i = 0; i <= posts; i++) {
+    const t = i / posts;
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.1, 5), M.logDark);
+    p.position.set(x1 + (x2 - x1) * t, 0.5, z1 + (z2 - z1) * t);
+    p.castShadow = true; g.add(p);
+  }
+  const len = Math.hypot(x2 - x1, z2 - z1);
+  for (const ry of [0.35, 0.75]) {
+    const rail = box(0.06, 0.1, len, M.log, (x1 + x2) / 2, ry, (z1 + z2) / 2);
+    rail.rotation.y = Math.atan2(x2 - x1, z2 - z1);
+    g.add(rail);
+  }
+  return g;
+}
+
+// a standing lamp post with a glowing lantern
+function lanternPost(x: number, z: number): THREE.Group {
+  const g = new THREE.Group();
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 2.3, 6), M.logDark);
+  post.position.y = 1.15; post.castShadow = true; g.add(post);
+  g.add(box(0.06, 0.06, 0.5, M.logDark, 0, 2.2, 0.22));
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.28, 0.2), M.lamp);
+  lamp.position.set(0, 2.06, 0.44); g.add(lamp);
+  g.position.set(x, 0, z);
+  return g;
+}
+
+// a weathered tree stump
+function stump(x: number, z: number): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.4, 0.42, 9), M.logDark);
+  m.position.set(x, 0.21, z); m.castShadow = true;
+  return m;
+}
+
+// a two-wheeled handcart
+function handcart(x: number, z: number, rot = 0): THREE.Group {
+  const g = new THREE.Group();
+  g.add(box(1.4, 0.4, 0.9, M.log, 0, 0.5, 0));
+  g.add(box(1.4, 0.28, 0.06, M.logDark, 0, 0.62, 0.45));
+  g.add(box(1.4, 0.28, 0.06, M.logDark, 0, 0.62, -0.45));
+  for (const sz of [-0.5, 0.5]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.1, 12), M.logDark);
+    w.rotation.x = Math.PI / 2; w.position.set(-0.25, 0.42, sz); w.castShadow = true; g.add(w);
+  }
+  g.add(box(1.3, 0.08, 0.08, M.log, 0.95, 0.7, -0.32));
+  g.add(box(1.3, 0.08, 0.08, M.log, 0.95, 0.7, 0.32));
+  g.position.set(x, 0, z); g.rotation.y = rot;
+  return g;
+}
+
+// a grazing or standing cow with hide patches and horns
+function cow(x: number, z: number, rot = 0, grazing = true): THREE.Group {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.66, 9, 7), M.cowHide);
+  body.scale.set(0.92, 0.92, 1.55); body.position.y = 1.05; body.castShadow = true;
+  g.add(body);
+  // hide patches
+  for (const [px, py, pz] of [[0.4, 1.2, -0.2], [-0.35, 1.0, 0.4], [0.2, 0.9, 0.8]] as const) {
+    const spot = new THREE.Mesh(new THREE.SphereGeometry(0.3, 6, 5), M.cowSpot);
+    spot.scale.set(0.6, 0.5, 0.9); spot.position.set(px, py, pz); g.add(spot);
+  }
+  // neck + head, lowered to the grass when grazing
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.62), M.cowHide);
+  if (grazing) { head.position.set(0, 0.45, 1.35); head.rotation.x = 0.55; }
+  else head.position.set(0, 1.2, 1.3);
+  head.castShadow = true; g.add(head);
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.26, 0.2), M.cowSpot);
+  muzzle.position.copy(head.position); muzzle.position.z += 0.34; muzzle.position.y -= grazing ? 0.12 : 0.06;
+  g.add(muzzle);
+  for (const sx of [-1, 1] as const) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.26, 5), M.sack);
+    horn.position.set(head.position.x + sx * 0.18, head.position.y + 0.26, head.position.z - 0.05);
+    horn.rotation.z = sx * 0.5; g.add(horn);
+  }
+  // legs
+  for (const [lx, lz] of [[-0.32, -0.7], [0.32, -0.7], [-0.32, 0.7], [0.32, 0.7]] as const) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 1.0, 5), M.cowHide);
+    leg.position.set(lx, 0.5, lz); leg.castShadow = true; g.add(leg);
+    g.add(box(0.14, 0.16, 0.16, M.cowSpot, lx, 0, lz)); // hoof
+  }
+  // tail
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.03, 0.8, 4), M.cowHide);
+  tail.position.set(0, 0.85, -1.0); tail.rotation.x = -0.4; g.add(tail);
+  g.position.set(x, 0, z); g.rotation.y = rot;
+  return g;
+}
+
+// scatter flat chips/pebbles on the ground (sawdust, rubble, trodden earth)
+function groundLitter(cx: number, cz: number, r: number, n: number, mat: THREE.Material): THREE.Group {
+  const g = new THREE.Group();
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * r;
+    const s = 0.1 + Math.random() * 0.2;
+    const c = box(s, 0.05, s * 0.6, mat, cx + Math.cos(a) * d, 0.02, cz + Math.sin(a) * d);
+    c.rotation.y = Math.random() * Math.PI;
+    c.castShadow = false;
+    g.add(c);
+  }
+  return g;
+}
+
 // ---- building constructors (all sized in world units) ----
 function buildHut(g: THREE.Group): void {
   const W = 4.4, D = 3.6, wallH = 2.3, roofH = 1.9;
@@ -159,6 +376,11 @@ function buildHut(g: THREE.Group): void {
   g.add(windowSh(W / 2 + 0.02, 1.45, -0.4, M.logDark, M.glass));
   // stone chimney with a wisp of smoke at the back corner
   g.add(chimney(M.stone, -W / 2 + 0.5, eaves, -D / 2 + 0.5, 2.0, 0.55));
+  // a shepherd's yard: firewood, a water bucket, a barrel by the door
+  g.add(woodpile(W / 2 + 1.0, 1.2, 0, 2.0));
+  g.add(bucket(-W / 2 - 0.7, 1.0));
+  g.add(barrel(W / 2 + 0.6, -1.0, 0.9));
+  g.add(stump(-W / 2 - 1.3, -1.4));
 }
 
 function buildSheepfold(g: THREE.Group): void {
@@ -189,27 +411,67 @@ function buildSheepfold(g: THREE.Group): void {
     s.castShadow = true;
     g.add(s);
   }
+  // a feed trough, hay bales and a water bucket by the barn
+  g.add(box(2.2, 0.4, 0.7, M.log, 1.8, 0.0, -2.6));
+  for (const [hx, hz] of [[-2.6, -2.2], [-3.2, -1.4]] as const) {
+    const bale = box(1.0, 0.7, 0.7, M.hay, hx, 0, hz);
+    g.add(bale);
+    g.add(box(1.02, 0.12, 0.72, M.logDark, hx, 0.28, hz)); // baling twine
+  }
+  g.add(bucket(0.6, -2.8));
 }
 
 function buildCamp(g: THREE.Group): void {
-  // a woodsmen's camp: log cabin, log pile, fire
-  g.add(box(5.0, 0.4, 3.6, M.stone, -1.5, 0, 0));
-  g.add(box(4.6, 2.0, 3.2, M.log, -1.5, 0.4, 0));
+  // the founders' hall — a broad communal longhouse, clearly the heart of the
+  // settlement rather than just another dwelling. Bigger footprint, a porch,
+  // a watch banner, and a working yard around it.
+  const W = 8.4, D = 5.0, wallH = 3.1, roofH = 2.9, cx = -0.6;
+  // broad stone footing
+  g.add(box(W + 0.9, 0.55, D + 0.9, M.stone, cx, 0, 0));
+  // stacked-log hall + heavy corner posts
+  g.add(box(W, wallH, D, M.log, cx, 0.55, 0));
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-    g.add(cylinder(0.2, 2.35, M.logDark, -1.5 + sx * 2.3, 0.3, sz * 1.6));
+    g.add(cylinder(0.26, wallH + 0.55, M.logDark, cx + (sx * W) / 2, 0.4, (sz * D) / 2));
   }
-  g.add(gableRoof(4.6, 3.2, 1.5, M.shingle, -1.5, 2.4, 0, 0.45, 0.45));
-  g.add(door(-1.5, 0.4, 1.62, M.logDark, M.shingle));
-  const logGeo = new THREE.CylinderGeometry(0.35, 0.35, 3, 6);
-  for (let i = 0; i < 3; i++) {
-    const l = new THREE.Mesh(logGeo, M.logDark);
-    l.rotation.z = Math.PI / 2;
-    l.position.set(2.6, 0.35 + i * 0.45, 1.4 - i * 0.1);
-    l.castShadow = true;
-    g.add(l);
+  // a mid-wall post and tie-beam, so the long walls read as framed
+  g.add(cylinder(0.22, wallH + 0.3, M.logDark, cx, 0.4, D / 2));
+  g.add(cylinder(0.22, wallH + 0.3, M.logDark, cx, 0.4, -D / 2));
+  // big pitched shingle roof with deep eaves + ridge beam
+  const eaves = 0.55 + wallH;
+  g.add(gableRoof(W, D, roofH, M.shingle, cx, eaves, 0, 0.7, 0.75));
+  g.add(box(0.26, 0.26, D + 1.7, M.logDark, cx, eaves + roofH - 0.2, 0));
+  // gable-end king post & decorative carved bargeboard
+  g.add(box(0.24, roofH - 0.4, 0.3, M.logDark, cx, eaves, D / 2 + 0.55));
+  // covered porch over a wide double doorway (front, +z)
+  for (const ps of [-1.4, 1.4]) g.add(cylinder(0.16, wallH - 0.2, M.logDark, cx + ps, 0.55, D / 2 + 1.4));
+  g.add(box(W - 1.2, 0.16, 1.6, M.shingle, cx, eaves - 0.1, D / 2 + 1.0));
+  g.add(door(cx - 0.7, 0.55, D / 2 + 0.02, M.logDark, M.shingle));
+  g.add(door(cx + 0.7, 0.55, D / 2 + 0.02, M.logDark, M.shingle));
+  // shuttered windows on the long sides
+  g.add(windowSh(cx + W / 2 + 0.02, 1.7, -1.2, M.logDark, M.glass));
+  g.add(windowSh(cx + W / 2 + 0.02, 1.7, 1.2, M.logDark, M.glass));
+  g.add(windowSh(cx - W / 2 - 0.02, 1.7, 0, M.logDark, M.glass));
+  // stone chimney with smoke at the back
+  g.add(chimney(M.stone, cx - W / 2 + 0.9, eaves, -D / 2 + 0.8, 3.0, 0.7));
+  // the hamlet's banner pole with a red standard — marks the founders' seat
+  const poleX = cx + W / 2 + 2.0, poleZ = D / 2 - 0.4;
+  g.add(cylinder(0.13, 7.0, M.logDark, poleX, 0, poleZ));
+  g.add(box(0.07, 1.3, 2.0, M.cloth, poleX + 0.05, 5.4, poleZ + 1.0));
+  // working yard: fire ring, woodpile, chopping block, stores
+  g.add(cylinder(0.5, 0.5, M.fire, 6.2, 0, -2.4));
+  g.add(box(3, 0.25, 3, M.dirt, 6.2, -0.05, -2.4));
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    g.add(box(0.42, 0.32, 0.42, M.stone, 6.2 + Math.cos(a) * 1.0, 0, -2.4 + Math.sin(a) * 1.0));
   }
-  g.add(cylinder(0.5, 0.5, M.fire, 2.4, 0, -1.6));
-  g.add(box(3, 0.25, 3, M.dirt, 2.4, -0.05, -1.6));
+  g.add(stump(7.6, -1.0));
+  g.add(stump(5.0, -3.4));
+  g.add(woodpile(6.4, 1.2, 0.2, 2.4));
+  g.add(choppingBlock(5.4, 2.2));
+  g.add(barrel(cx - W / 2 - 1.4, 1.6));
+  g.add(crate(cx - W / 2 - 1.2, -0.2, 0.4));
+  g.add(sack(cx - W / 2 - 2.0, 0.6));
+  g.add(groundLitter(6.0, 0.2, 2.0, 12, M.log));
 }
 
 function buildLumberCamp(g: THREE.Group): void {
@@ -226,10 +488,24 @@ function buildLumberCamp(g: THREE.Group): void {
     l.castShadow = true;
     g.add(l);
   }
-  // saw trestle
-  g.add(box(2.6, 0.2, 0.5, M.log, 0.4, 0.8, -1));
-  g.add(box(0.18, 0.8, 0.5, M.logDark, -0.6, 0, -1));
-  g.add(box(0.18, 0.8, 0.5, M.logDark, 1.4, 0, -1));
+  // a log being sawn on the trestle, with a two-man saw biting into it
+  g.add(sawhorse(-0.5, -1.2, 0.08));
+  g.add(sawhorse(1.4, -1.2, -0.08));
+  const onTrestle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 2.6, 7), M.log);
+  onTrestle.rotation.z = Math.PI / 2; onTrestle.position.set(0.45, 0.95, -1.2);
+  onTrestle.castShadow = true; g.add(onTrestle);
+  const sawBlade = box(1.3, 0.34, 0.04, M.iron, 0.45, 1.3, -1.2);
+  sawBlade.rotation.z = 0.12; g.add(sawBlade);
+  g.add(box(0.1, 0.42, 0.1, M.logDark, -0.25, 1.32, -1.2)); // saw handles
+  g.add(box(0.1, 0.42, 0.1, M.logDark, 1.15, 1.42, -1.2));
+  // a stack of finished planks, fresh-cut logs, and an axe in a chopping block
+  g.add(plankStack(2.6, -0.6, 0.1));
+  g.add(woodpile(-2.8, -0.4, Math.PI / 2, 2.6));
+  g.add(choppingBlock(-2.4, 1.6));
+  g.add(stump(2.8, 1.6));
+  g.add(barrel(-2.0, 2.0, 0.9));
+  // sawdust and offcuts trodden into the ground
+  g.add(groundLitter(0, 0, 3.4, 22, M.log));
 }
 
 function buildQuarry(g: THREE.Group): void {
@@ -245,6 +521,13 @@ function buildQuarry(g: THREE.Group): void {
   g.add(box(0.5, 0.6, 0.5, M.stone, 0, 1.4, -1.4)); // hanging block
   // rubble pad
   g.add(box(5, 0.18, 4, M.dirt, 0, -0.02, 0));
+  // mason's clutter: sledge, chisels in a crate, dressed blocks, stone rubble
+  g.add(handcart(-2.8, 2.2, 0.5));
+  g.add(crate(2.6, 2.0, -0.3));
+  g.add(box(0.9, 0.6, 0.7, M.stoneDark, 2.4, 0.18, -2.0));
+  g.add(box(0.7, 0.5, 0.6, M.stoneDark, 1.5, 0.18, -2.4));
+  g.add(barrel(-2.6, -1.6));
+  g.add(groundLitter(0, 0.5, 3.0, 24, M.stone));
 }
 
 function buildForager(g: THREE.Group): void {
@@ -268,6 +551,15 @@ function buildForager(g: THREE.Group): void {
     top.position.set(bx, 0.5, bz);
     g.add(top);
   }
+  // herbs hung to dry on the rack, sacks of foraged goods, a barrel of preserves
+  for (const hx of [0.9, 1.4, 1.9]) {
+    const bundle = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 6), M.hay);
+    bundle.position.set(hx, 1.25, -1); bundle.rotation.x = Math.PI; g.add(bundle);
+  }
+  g.add(sack(-2.4, 1.2));
+  g.add(sack(-2.7, 0.4, M.sack));
+  g.add(barrel(2.2, -1.6, 0.85));
+  g.add(bucket(0.2, -1.6));
 }
 
 function buildInn(g: THREE.Group): void {
@@ -295,6 +587,15 @@ function buildInn(g: THREE.Group): void {
   for (const ux of [-2.4, 0, 2.4]) g.add(box(1.0, 1.1, 0.12, M.glass, ux, 4.4, (D + 0.2) / 2 + 0.04));
   // chimney
   g.add(chimney(M.stone, W / 2 - 1.0, 6.6, -D / 2 + 0.8, 2.6, 0.7));
+  // a coaching-inn yard: lanterns flanking the door, ale barrels, a parked cart
+  g.add(lanternPost(-1.6, D / 2 + 0.9));
+  g.add(lanternPost(1.6, D / 2 + 0.9));
+  g.add(barrel(W / 2 + 0.9, 1.6));
+  g.add(barrel(W / 2 + 1.5, 1.0, 0.95));
+  g.add(barrel(W / 2 + 0.9, 0.2, 0.9));
+  g.add(handcart(-W / 2 - 1.6, 0.5, 0.3));
+  g.add(crate(-W / 2 - 1.2, -1.8, -0.4));
+  g.add(sack(-W / 2 - 1.9, -1.4));
 }
 
 function buildMonastery(g: THREE.Group): void {
@@ -335,12 +636,185 @@ function buildMonastery(g: THREE.Group): void {
   spire.castShadow = true;
   g.add(spire);
   g.add(cross(0, 12.4, 1.8));
+  // a working monastery courtyard: a well, lanterns by the gate, stores
+  const well = cylinder(1.1, 1.1, M.stone, -6, 0, 6);
+  g.add(well);
+  g.add(box(0.2, 2.4, 0.2, M.logDark, -6.9, 1.1, 6));
+  g.add(box(0.2, 2.4, 0.2, M.logDark, -5.1, 1.1, 6));
+  g.add(pyramid(1.5, 0.9, M.shingle, -6, 3.5, 6));
+  g.add(lanternPost(-2.4, half - 1.2));
+  g.add(lanternPost(2.4, half - 1.2));
+  g.add(barrel(6, 7));
+  g.add(barrel(6.8, 6.5, 0.95));
+  g.add(crate(5.4, 8, 0.3));
+  g.add(woodpile(7.5, -2, Math.PI / 2, 3.2));
+}
+
+function buildHunters(g: THREE.Group): void {
+  // a hunters' lodge: raised log cabin, a watch platform with a horn, antler
+  // trophy over the door, drying hides and a rack of spears
+  const W = 4.6, D = 3.8, wallH = 2.4;
+  g.add(box(W + 0.5, 0.4, D + 0.5, M.stone, 0, 0, 0));
+  g.add(tag(box(W, wallH, D, M.log, 0, 0.4, 0), 'wall'));
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const)
+    g.add(cylinder(0.2, wallH + 0.4, M.logDark, (sx * W) / 2, 0.3, (sz * D) / 2));
+  const eaves = 0.4 + wallH;
+  g.add(tag(gableRoof(W, D, 1.7, M.shingle, 0, eaves, 0, 0.5, 0.5), 'roof'));
+  g.add(door(0, 0.4, D / 2 + 0.02, M.logDark, M.shingle));
+  // antler trophy over the door
+  for (const sx of [-1, 1] as const) {
+    for (let k = 0; k < 3; k++) {
+      const tine = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.5, 4), M.sack);
+      tine.position.set(sx * (0.18 + k * 0.14), 2.0 + k * 0.12, D / 2 + 0.1);
+      tine.rotation.z = sx * (0.5 + k * 0.18);
+      g.add(tine);
+    }
+  }
+  // a watch platform on stilts beside the lodge
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const)
+    g.add(cylinder(0.12, 3.4, M.logDark, W / 2 + 1.8 + sx * 0.7, 0, -1.0 + sz * 0.7));
+  g.add(box(2.0, 0.18, 2.0, M.shingle, W / 2 + 1.8, 3.3, -1.0));
+  g.add(box(2.0, 0.6, 0.12, M.logDark, W / 2 + 1.8, 3.5, -2.0)); // rail
+  // drying hides on a rack
+  g.add(box(0.14, 1.6, 0.14, M.logDark, -W / 2 - 1.4, 0, -1.0));
+  g.add(box(0.14, 1.6, 0.14, M.logDark, -W / 2 - 1.4, 0, 1.0));
+  g.add(box(0.14, 0.12, 2.2, M.log, -W / 2 - 1.4, 1.5, 0));
+  for (const hz of [-0.6, 0.6]) {
+    const hide = box(0.06, 1.0, 0.8, M.sack, -W / 2 - 1.4, 0.4, hz);
+    g.add(hide);
+  }
+  // a stack of pelts and a leaning rack of spears
+  g.add(box(1.0, 0.4, 0.7, M.sack, -W / 2 - 0.4, 0.1, 1.6));
+  for (const sxo of [-0.15, 0, 0.15]) {
+    const spear = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.2, 5), M.logDark);
+    spear.position.set(W / 2 + 0.3 + sxo, 1.0, 1.5);
+    spear.rotation.z = 0.25;
+    spear.castShadow = true;
+    g.add(spear);
+  }
+}
+
+function buildFishery(g: THREE.Group): void {
+  // a fisherman's hut raised on stilts at the water's edge, with a jetty,
+  // hung nets, a drying line of fish, an upturned rowboat and barrels of catch
+  const W = 3.6, D = 3.0, floor = 0.9;
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const)
+    g.add(cylinder(0.16, floor + 0.4, M.logDark, (sx * W) / 2, -0.3, (sz * D) / 2));
+  g.add(box(W + 0.4, 0.25, D + 0.4, M.log, 0, floor - 0.25, 0)); // deck/floor
+  g.add(tag(box(W, 1.9, D, M.log, 0, floor, 0), 'wall'));
+  g.add(tag(gableRoof(W, D, 1.3, M.thatch, 0, floor + 1.9, 0, 0.5, 0.5), 'roof'));
+  g.add(door(0, floor, D / 2 + 0.02, M.logDark, M.shingle));
+  // jetty reaching out over the water (toward +x, the river side)
+  for (const jx of [W / 2 + 0.9, W / 2 + 2.2, W / 2 + 3.5]) {
+    g.add(cylinder(0.12, floor + 0.6, M.logDark, jx, -0.5, -0.8));
+    g.add(cylinder(0.12, floor + 0.6, M.logDark, jx, -0.5, 0.8));
+  }
+  g.add(box(4.4, 0.16, 2.0, M.log, W / 2 + 2.4, floor - 0.25, 0));
+  // a drying line of fish between two posts
+  g.add(cylinder(0.1, 2.2, M.logDark, -W / 2 - 0.8, 0, -1.0));
+  g.add(cylinder(0.1, 2.2, M.logDark, -W / 2 - 0.8, 0, 1.2));
+  for (const fz of [-0.7, -0.1, 0.5, 1.0]) {
+    const fish = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 4), M.iron);
+    fish.scale.set(1, 2.0, 0.5); fish.position.set(-W / 2 - 0.8, 1.5, fz);
+    g.add(fish);
+  }
+  // a hung net (a thin translucent sheet)
+  const net = box(0.04, 1.3, 1.8, M.sack, -W / 2 - 0.05, 0.5, -0.4);
+  g.add(net);
+  // an upturned rowboat on the bank + barrels of catch
+  const boat = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), M.log);
+  boat.scale.set(1, 0.5, 2.2); boat.rotation.z = Math.PI; boat.position.set(-1.6, 0.45, 2.6);
+  boat.castShadow = true; g.add(boat);
+  g.add(barrel(1.6, 2.6, 0.9));
+  g.add(barrel(2.4, 2.5));
+}
+
+function buildBridge(g: THREE.Group): void {
+  // a timber-and-stone crossing spanning the river. The long axis is local X;
+  // placement auto-orients it across the stream (see input.ts). It rides on its
+  // own stone piers (no terraced foundation).
+  const L = 36, wHalf = 2.6, deckY = 1.9;
+  // stone abutments + mid piers
+  for (const pxr of [-1, -0.5, 0, 0.5, 1]) {
+    const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.15, deckY + 3.2, 8), M.stone);
+    pier.position.set(pxr * L * 0.46, deckY - (deckY + 3.2) / 2, 0);
+    pier.castShadow = true; pier.receiveShadow = true;
+    g.add(pier);
+  }
+  // a gently cambered plank deck (built from segments so it can arch)
+  const segs = 9;
+  for (let i = 0; i < segs; i++) {
+    const t = i / (segs - 1);
+    const sx = (t - 0.5) * L;
+    const camber = Math.sin(t * Math.PI) * 0.7;
+    g.add(box(L / segs + 0.1, 0.3, wHalf * 2, M.log, sx, deckY + camber, 0));
+  }
+  // cross-plank treads
+  for (let i = 0; i < 20; i++) {
+    const t = i / 19;
+    const sx = (t - 0.5) * (L - 2);
+    const camber = Math.sin(t * Math.PI) * 0.7;
+    g.add(box(0.5, 0.08, wHalf * 2 - 0.1, M.logDark, sx, deckY + camber + 0.18, 0));
+  }
+  // railings: posts + top rail along both edges
+  for (const sz of [-1, 1] as const) {
+    for (let i = 0; i < 11; i++) {
+      const t = i / 10;
+      const sx = (t - 0.5) * (L - 1.5);
+      const camber = Math.sin(t * Math.PI) * 0.7;
+      g.add(cylinder(0.1, 1.1, M.logDark, sx, deckY + camber + 0.15, sz * wHalf));
+    }
+    // top rail in cambered segments
+    for (let i = 0; i < segs; i++) {
+      const t = i / (segs - 1);
+      const sx = (t - 0.5) * (L - 1.5);
+      const camber = Math.sin(t * Math.PI) * 0.7;
+      g.add(box(L / segs, 0.16, 0.16, M.log, sx, deckY + camber + 1.2, sz * wHalf));
+    }
+  }
+}
+
+function buildStana(g: THREE.Group): void {
+  // a Carpathian shepherds' dairy (stână): a low log dwelling, a fenced paddock
+  // of grazing cattle, a butter churn and rounds of cheese drying on a rack
+  const W = 3.8, D = 3.2;
+  g.add(box(W + 0.5, 0.35, D + 0.5, M.stone, -3.2, 0, -2.2));
+  g.add(tag(box(W, 1.95, D, M.log, -3.2, 0.35, -2.2), 'wall'));
+  g.add(tag(gableRoof(W, D, 1.35, M.thatch, -3.2, 2.3, -2.2, 0.5, 0.5), 'roof'));
+  g.add(door(-3.2, 0.35, -2.2 + D / 2 + 0.02, M.logDark, M.shingle));
+  g.add(chimney(M.stone, -3.2 - W / 2 + 0.6, 2.3, -2.2, 1.8, 0.5));
+  // paddock fence — an open rectangle with a gateway gap at the front-left
+  g.add(fenceRun(-0.6, 3.6, 5.2, 3.6, 6));
+  g.add(fenceRun(5.2, 3.6, 5.2, -2.2, 5));
+  g.add(fenceRun(5.2, -2.2, -0.6, -2.2, 5));
+  g.add(fenceRun(-0.6, -2.2, -0.6, 1.4, 3));
+  // grazing cattle
+  g.add(cow(1.4, 2.4, 0.6, true));
+  g.add(cow(3.3, 0.5, 2.3, true));
+  g.add(cow(2.1, -0.9, 4.0, false));
+  g.add(cow(4.0, 2.7, 1.2, true));
+  // milking corner: stool + pail + churn
+  g.add(box(0.4, 0.42, 0.4, M.logDark, -1.5, 0, 1.1));
+  g.add(bucket(-1.1, 1.4));
+  g.add(cylinder(0.3, 1.0, M.log, -1.9, 0, 0.1));
+  g.add(cylinder(0.06, 0.95, M.logDark, -1.9, 1.0, 0.1)); // churn dasher
+  // cheese rounds drying on a rack beside the hut
+  g.add(box(0.12, 1.3, 0.12, M.logDark, -5.0, 0, -1.4));
+  g.add(box(0.12, 1.3, 0.12, M.logDark, -5.0, 0, 0.3));
+  g.add(box(0.12, 0.1, 1.9, M.log, -5.0, 1.2, -0.55));
+  for (const cz of [-1.0, -0.45, 0.1]) {
+    const round = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.16, 10), M.milk);
+    round.position.set(-5.0, 0.92, cz); round.castShadow = true; g.add(round);
+  }
+  // a heap of hay for the winter byre
+  g.add(box(1.3, 0.7, 0.95, M.hay, 0.4, 0, 3.1));
 }
 
 export const DEFS: Record<string, BuildingDef> = {
   camp: {
-    key: 'camp', name: 'Woodsmen’s Camp', desc: 'The first hearth of the valley. Drop off resources and shelter new settlers.',
-    cost: {}, buildPoints: 1, popCap: 5, isDropoff: true, trains: true, radius: 6, build: buildCamp,
+    key: 'camp', name: 'Founders’ Hall', desc: 'The first hearth of the valley — the heart of the settlement. Drop off resources, shelter new settlers, and ward off wolves and bears nearby.',
+    cost: {}, buildPoints: 1, popCap: 5, isDropoff: true, trains: true, radius: 8,
+    defendRange: 28, defendDps: 7, build: buildCamp,
   },
   hut: {
     key: 'hut', name: 'Hut', desc: 'A shepherd’s log hut. Houses 3 settlers.',
@@ -368,6 +842,30 @@ export const DEFS: Record<string, BuildingDef> = {
     desc: 'Berry-pickers’ camp. Drop off food here, and nearby foraging goes faster.',
     cost: { wood: 30 }, buildPoints: 26, popCap: 0, isDropoff: true, trains: false, radius: 4.5,
     boosts: 'food', boostRange: 40, build: buildForager,
+  },
+  hunters: {
+    key: 'hunters', name: 'Hunter’s Lodge',
+    desc: 'Trappers and marksmen. Brings in game meat, and shoots wolves and bears that stray within range.',
+    cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    foodTrickle: 0.4, defendRange: 50, defendDps: 17, build: buildHunters,
+  },
+  fishery: {
+    key: 'fishery', name: 'Fisherman’s Hut',
+    desc: 'A stilted hut and jetty on the Prahova. A steady catch of fish feeds the settlement. Build it at the water’s edge.',
+    cost: { wood: 45 }, buildPoints: 38, popCap: 0, isDropoff: false, trains: false, radius: 4.5,
+    foodTrickle: 0.7, build: buildFishery,
+  },
+  stana: {
+    key: 'stana', name: 'Stână (Mountain Dairy)',
+    desc: 'A shepherds’ dairy. Cattle graze the paddock and are milked for a steady supply of food. Best on open meadow.',
+    cost: { wood: 55 }, buildPoints: 44, popCap: 0, isDropoff: false, trains: false, radius: 7,
+    foodTrickle: 0.85, build: buildStana,
+  },
+  bridge: {
+    key: 'bridge', name: 'Bridge',
+    desc: 'A timber crossing over the Prahova, linking the two banks. Place it across the river.',
+    cost: { wood: 70, stone: 40 }, buildPoints: 60, popCap: 0, isDropoff: false, trains: false, radius: 4,
+    noFoundation: true, build: buildBridge,
   },
   monastery: {
     key: 'monastery', name: 'Sinaia Monastery', desc: 'Mihail Cantacuzino’s vow — the seed from which a town will grow. Pilgrims’ offerings fill the treasury.',
@@ -429,32 +927,61 @@ export class Building {
   // hillside instead of floating or sinking. Cheap, and leaves the real terrain
   // (and villager pathing height) untouched.
   private addFoundation(): void {
-    if (this.foundation) return;
+    if (this.foundation || this.def.noFoundation) return;
     const baseY = this.group.position.y;
     const padR = this.def.radius + 1.2;
-    // how far the downhill side drops below the building base (on the visible mesh)
-    let lowest = 0;
-    for (let a = 0; a < 12; a++) {
-      const ang = (a / 12) * Math.PI * 2;
-      const sx = this.x + Math.cos(ang) * padR, sz = this.z + Math.sin(ang) * padR;
-      lowest = Math.min(lowest, surfaceHeight(sx, sz) - baseY);
+    // sample the surrounding ring: how far the downhill side drops below the
+    // building base, and how high the uphill side rises above it (both on the
+    // rendered mesh). Probe at the footprint edge AND a little beyond so a steep
+    // back slope is caught.
+    let lowest = 0, highest = 0;
+    for (let a = 0; a < 16; a++) {
+      const ang = (a / 16) * Math.PI * 2;
+      for (const rr of [this.def.radius, padR]) {
+        const sx = this.x + Math.cos(ang) * rr, sz = this.z + Math.sin(ang) * rr;
+        const d = surfaceHeight(sx, sz) - baseY;
+        lowest = Math.min(lowest, d);
+        highest = Math.max(highest, d);
+      }
     }
-    const top = 0.3;
+    // raise the whole building so its floor clears the highest surrounding
+    // ground — otherwise the uphill (back) wall sits buried in the slope.
+    const lift = Math.max(0, Math.min(14, highest + 0.3));
+    this.structure.position.y = lift;
+    const top = lift + 0.3;                                   // stone lip at floor
     const bottom = Math.max(-18, Math.min(-0.8, lowest - 1.2));
     const h = top - bottom;
     const g = new THREE.Group();
-    // battered stone retaining wall (a touch wider at the base)
-    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(padR, padR * 1.06, h, 28), M.stone);
+    // battered coursed-masonry retaining wall. Faceted (segments scale with
+    // size) and given a stone texture sized to ~1.4 m blocks so it reads as a
+    // built dry-stone wall, not a smooth drum.
+    const circ = 2 * Math.PI * padR;
+    const seg = Math.max(16, Math.min(48, Math.round(circ / 2.2)));
+    const wallMat = retainingWallMaterial(circ, h);
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(padR, padR * 1.08, h, seg), wallMat);
     skirt.position.y = bottom + h / 2;
     skirt.castShadow = true;
     skirt.receiveShadow = true;
     g.add(skirt);
-    // a darker course capping the wall, then the flattened grass platform
-    const course = new THREE.Mesh(new THREE.CylinderGeometry(padR + 0.15, padR + 0.15, 0.35, 28), M.stoneDark);
-    course.position.y = top - 0.25;
+    // vertical buttress ribs spaced around the wall — articulation that reads as
+    // a real retaining structure rather than a featureless cylinder
+    const ribs = Math.max(6, Math.min(18, Math.round(circ / 6)));
+    for (let i = 0; i < ribs; i++) {
+      const ang = (i / ribs) * Math.PI * 2;
+      const rib = box(0.6, h - 0.2, 0.5, M.stoneDark, 0, 0, 0);
+      rib.position.set(Math.cos(ang) * (padR + 0.18), bottom + h / 2, Math.sin(ang) * (padR + 0.18));
+      rib.rotation.y = -ang;
+      rib.castShadow = true;
+      rib.receiveShadow = true;
+      g.add(rib);
+    }
+    // a darker coping course capping the wall, then the flattened grass platform
+    const course = new THREE.Mesh(new THREE.CylinderGeometry(padR + 0.22, padR + 0.22, 0.4, seg), M.stoneDark);
+    course.position.y = top - 0.22;
+    course.castShadow = true;
     course.receiveShadow = true;
     g.add(course);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(padR - 0.2, padR + 0.1, 0.5, 28), M.grass);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(padR - 0.2, padR + 0.12, 0.5, seg), M.grass);
     cap.position.y = top - 0.05;
     cap.receiveShadow = true;
     g.add(cap);

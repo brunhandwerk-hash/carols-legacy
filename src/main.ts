@@ -9,7 +9,8 @@ import { initEras, updateEras, ERAS } from './eras';
 import { initInput, CameraRig } from './input';
 import { initMinimap, drawMinimap } from './minimap';
 import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus } from './ui';
-import { loadDem, lonLatToWorld, setRoads } from './terrain';
+import { loadDem, lonLatToWorld, setRoads, updateWater } from './terrain';
+import { initWildlife, updateWildlife } from './wildlife';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -82,6 +83,7 @@ async function boot(): Promise<void> {
   });
 
   initEras(scene);
+  initWildlife(scene);
 
   rig = initInput(canvas, camera, world);
   rig.jumpTo(START.camp.x - 30, START.camp.z - 40);
@@ -154,7 +156,11 @@ function tick(now: number): void {
     G.time += dt;
     for (const v of G.villagers) v.update(dt);
     for (const b of G.buildings) b.update(dt, spawnVillager);
+    updateWildlife(dt);
     updateEras(dt);
+  }
+  updateWater(dt);
+  if (!G.paused) {
 
     hudTimer += dt;
     if (hudTimer > 0.2) { hudTimer = 0; updateHud(); updateSelectionStatus(); }

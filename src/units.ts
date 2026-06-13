@@ -3,12 +3,15 @@ import { terrainHeight, surfaceHeight, walkable } from './terrain';
 import { G, ResourceNode } from './state';
 import { Building, nearestDropoff, gatherBonusAt } from './buildings';
 import { hideNode } from './world';
+import type { Bear } from './wildlife';
 
 type Task =
   | { kind: 'idle' }
   | { kind: 'move'; x: number; z: number }
   | { kind: 'gather'; node: ResourceNode; sub: 'go' | 'work' | 'return' }
-  | { kind: 'build'; building: Building; sub: 'go' | 'work' };
+  | { kind: 'build'; building: Building; sub: 'go' | 'work' }
+  | { kind: 'flee'; fromX: number; fromZ: number; t: number }
+  | { kind: 'fight'; bear: Bear; sub: 'go' | 'work' };
 
 const cloth = (color: number, rough = 0.86): THREE.MeshStandardMaterial =>
   new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
@@ -70,6 +73,9 @@ export class Villager {
   carry = 0;
   carryKind: 'wood' | 'stone' | 'food' = 'wood';
   speed = 18;
+  hp = 40;
+  maxHp = 40;
+  alive = true;
   profession: Profession;
   private workTimer = 0;
   private bobPhase = Math.random() * Math.PI * 2;
@@ -85,6 +91,18 @@ export class Villager {
     body.position.y = 0.85;
     body.castShadow = true;
     this.body = body;
+    // arms — children of the body so they swing with the work/chop animation
+    for (const sx of [-1, 1] as const) {
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.95, 6), outfit.coat);
+      arm.position.set(sx * 0.62, 0.18, 0.18);
+      arm.rotation.z = sx * 0.12;
+      arm.rotation.x = -0.25;
+      arm.castShadow = true;
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.16, 7, 5), skin);
+      hand.position.set(0, -0.55, 0.05);
+      arm.add(hand);
+      body.add(arm);
+    }
     const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.8, 0.8, 8), outfit.coat);
     coat.position.y = 0.55;
     coat.castShadow = true;
@@ -132,10 +150,34 @@ export class Villager {
       }
       case 'build':
         return t.sub === 'go' ? `Walking to ${t.building.def.name}` : `Building the ${t.building.def.name}`;
+      case 'flee': return 'Fleeing a wild animal!';
+      case 'fight': return t.sub === 'go' ? 'Closing on the beast' : 'Fighting off the beast!';
     }
   }
 
   setSelected(sel: boolean): void { this.ring.visible = sel; }
+
+  // flee a threat (a bear's approach) unless the player has ordered this villager
+  // to stand and fight
+  panic(fromX: number, fromZ: number): void {
+    if (this.task.kind === 'fight') return;
+    this.task = { kind: 'flee', fromX, fromZ, t: 2.6 };
+  }
+
+  takeDamage(d: number): void {
+    if (!this.alive) return;
+    this.hp -= d;
+    if (this.hp <= 0) this.die();
+  }
+
+  private die(): void {
+    this.alive = false;
+    this.group.removeFromParent();
+    const i = G.villagers.indexOf(this); if (i >= 0) G.villagers.splice(i, 1);
+    const s = G.selected.indexOf(this); if (s >= 0) G.selected.splice(s, 1);
+  }
+
+  orderAttack(bear: Bear): void { this.task = { kind: 'fight', bear, sub: 'go' }; }
 
   // stop building/approaching a structure that's being demolished
   releaseFrom(b: Building): void {
@@ -253,8 +295,36 @@ export class Villager {
         }
         break;
       }
+      case 'flee': {
+        t.t -= dt;
+        const dx = this.x - t.fromX, dz = this.z - t.fromZ;
+        const d = Math.hypot(dx, dz) || 1;
+        this.stepToward(this.x + (dx / d) * 10, this.z + (dz / d) * 10, dt);
+        if (t.t <= 0) this.task = { kind: 'idle' };
+        break;
+      }
+      case 'fight': {
+        const bear = t.bear;
+        if (!bear.alive) { this.body.rotation.x = 0; this.task = { kind: 'idle' }; break; }
+        const d2 = (this.x - bear.x) ** 2 + (this.z - bear.z) ** 2;
+        if (t.sub === 'go') {
+          this.stepToward(bear.x, bear.z, dt);
+          if (d2 < 3.2 * 3.2) { t.sub = 'work'; this.workTimer = 0; }
+        } else {
+          if (d2 > 4.4 * 4.4) { t.sub = 'go'; this.body.rotation.x = 0; break; }
+          this.group.rotation.y = Math.atan2(bear.x - this.x, bear.z - this.z);
+          this.workTimer += dt;
+          this.body.rotation.x = Math.sin(this.workTimer * 9) * 0.28; // jabbing
+          if (this.workTimer >= 0.7) {
+            this.workTimer = 0;
+            bear.takeDamage(this.profession === 'woodcutter' ? 7 : 5);
+          }
+        }
+        break;
+      }
     }
-    if (t.kind !== 'gather' || t.sub !== 'work') this.body.rotation.x *= 0.8;
+    const swinging = (t.kind === 'gather' && t.sub === 'work') || (t.kind === 'fight' && t.sub === 'work');
+    if (!swinging) this.body.rotation.x *= 0.8;
   }
 
   private findNearbyNode(like: ResourceNode): ResourceNode | null {
