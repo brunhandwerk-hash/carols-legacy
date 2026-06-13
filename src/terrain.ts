@@ -214,6 +214,7 @@ export function buildTerrainMesh(): THREE.Mesh {
   const rockHigh = new THREE.Color(PALETTE.rockHigh);
   const snowC = new THREE.Color(PALETTE.snow);
   const dirt = new THREE.Color(PALETTE.dirt);
+  const waterC = new THREE.Color(0x3a6f8c); // river-bed tint, so the course reads on the ground itself
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -227,8 +228,11 @@ export function buildTerrainMesh(): THREE.Mesh {
     // rock on steep ground, more above the treeline
     if (slope > 0.55) c.lerp(slope > 1.0 ? rockHigh : rockC, Math.min(1, (slope - 0.55) / 0.45));
     if (h > SNOWLINE) c.lerp(snowC, Math.min(1, (h - SNOWLINE) / 90));
+    // the Prahova: a clear blue river-bed band, fading to muddy banks, painted
+    // into the ground so the course is obvious even where the water plane is subtle
     const rd = Math.abs(x - riverX(z));
-    if (rd < 26) c.lerp(dirt, (1 - rd / 26) * 0.6);
+    if (rd < 24) c.lerp(waterC, (1 - rd / 24) * 0.92);
+    else if (rd < 44) c.lerp(dirt, (1 - (rd - 24) / 20) * 0.5);
     const road = roadDistance(x, z);
     if (road < 5) c.lerp(dirt, (1 - road / 5) * 0.85);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
@@ -390,8 +394,8 @@ export function buildBackdropMesh(): THREE.Mesh | null {
 
 export function buildRiverMesh(): THREE.Mesh {
   const steps = 360;
-  const halfW = 13;
-  const lift = 0.4;
+  const halfW = 24;  // a generous, clearly visible channel
+  const lift = 2.2;  // water level above the valley floor; terrain naturally clips the edges
   const verts: number[] = [];
   const uvs: number[] = [];
   const idx: number[] = [];
@@ -400,17 +404,14 @@ export function buildRiverMesh(): THREE.Mesh {
   for (let i = 0; i <= steps; i++) {
     const z = MAP.minZ + (i / steps) * MAP.depth;
     const x = riverX(z);
-    // Drape the ribbon on the *rendered* (coarse) surface like the roads do.
-    // The rendered mesh is far lower-res than the DEM and can't dip into the
-    // narrow valley, so water placed at the true (rawHeight) valley floor sits
-    // BELOW the visible ground and vanishes. Hugging surfaceHeight keeps it on
-    // top, clearly visible along the valley.
-    const lx = x - halfW, rx = x + halfW;
-    const ly = surfaceHeight(lx, z) + lift;
-    const ry = surfaceHeight(rx, z) + lift;
+    // A FLAT water surface per row, set just above the *rendered* valley floor
+    // (surfaceHeight, not the full-res rawHeight which sits below the coarse
+    // mesh and vanishes). The flat sheet fills the channel; where the banks rise
+    // above the waterline the terrain clips the edges — so it reads as a river.
+    const y = surfaceHeight(x, z) + lift;
     if (i > 0) cum += Math.hypot(x - px, z - pz);
     px = x; pz = z;
-    verts.push(lx, ly, z, rx, ry, z);
+    verts.push(x - halfW, y, z, x + halfW, y, z);
     const v = cum / 26;
     uvs.push(0, v, 1, v);
     if (i < steps) {
