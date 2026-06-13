@@ -389,8 +389,9 @@ export function buildBackdropMesh(): THREE.Mesh | null {
 }
 
 export function buildRiverMesh(): THREE.Mesh {
-  const steps = 320;
-  const halfW = 17;
+  const steps = 360;
+  const halfW = 13;
+  const lift = 0.4;
   const verts: number[] = [];
   const uvs: number[] = [];
   const idx: number[] = [];
@@ -399,12 +400,17 @@ export function buildRiverMesh(): THREE.Mesh {
   for (let i = 0; i <= steps; i++) {
     const z = MAP.minZ + (i / steps) * MAP.depth;
     const x = riverX(z);
-    // sit just above the carved valley floor; the reflective PBR water catches
-    // the sky so the channel reads clearly even where the banks are shallow
-    const y = rawHeight(x, z) + 1.2;
+    // Drape the ribbon on the *rendered* (coarse) surface like the roads do.
+    // The rendered mesh is far lower-res than the DEM and can't dip into the
+    // narrow valley, so water placed at the true (rawHeight) valley floor sits
+    // BELOW the visible ground and vanishes. Hugging surfaceHeight keeps it on
+    // top, clearly visible along the valley.
+    const lx = x - halfW, rx = x + halfW;
+    const ly = surfaceHeight(lx, z) + lift;
+    const ry = surfaceHeight(rx, z) + lift;
     if (i > 0) cum += Math.hypot(x - px, z - pz);
     px = x; pz = z;
-    verts.push(x - halfW, y, z, x + halfW, y, z);
+    verts.push(lx, ly, z, rx, ry, z);
     const v = cum / 26;
     uvs.push(0, v, 1, v);
     if (i < steps) {
