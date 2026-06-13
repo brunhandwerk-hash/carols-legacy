@@ -57,8 +57,35 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   scene.add(buildRoadMesh());
 
   const gatherables = scatterNature(scene);
+  paintForestFloor(terrain); // dark-green the forest footprint (clearings now known)
 
   return { scene, terrain, sun, gatherables };
+}
+
+// Bake a dark forest-floor green into the terrain vertex colours wherever the
+// forest grows. Distant chunks render no tree geometry (see updateForestLOD), so
+// this tint is what makes the far valley still read as deep forest instead of
+// bright meadow — at a fraction of the draw cost.
+function paintForestFloor(terrain: THREE.Mesh): void {
+  const geo = terrain.geometry as THREE.BufferGeometry;
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const col = geo.attributes.color as THREE.BufferAttribute;
+  const dark = new THREE.Color(0x2c4126);
+  const dark2 = new THREE.Color(0x37502e);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    if (!forestedAt(x, z)) continue;
+    if (roadDistance(x, z) < 6) continue; // keep the cobbled roads readable
+    const v = 0.5 + 0.5 * Math.sin(x * 0.021 + 1.3) * Math.sin(z * 0.018);
+    c.copy(dark).lerp(dark2, v);
+    // keep a hint of the underlying terrain variation under the forest tint
+    col.setXYZ(i,
+      col.getX(i) * 0.16 + c.r * 0.84,
+      col.getY(i) * 0.16 + c.g * 0.84,
+      col.getZ(i) * 0.16 + c.b * 0.84);
+  }
+  col.needsUpdate = true;
 }
 
 // ---- forest clearings (poieni) — real ones, by name ----
@@ -77,9 +104,11 @@ const CLEARING_GEOS = [
 
 let clearings: { x: number; z: number; r: number }[] = [];
 
-// forest level-of-detail: chunks near the camera show every tree, distant
-// chunks swap to a sparse fat-tree proxy
-interface ForestChunk { cx: number; cz: number; near: THREE.InstancedMesh; far: THREE.InstancedMesh }
+// forest level-of-detail: only chunks within LOD_DIST of the camera render their
+// trees as geometry. Everything beyond is just the dark-green forest floor that
+// `paintForestFloor` bakes into the terrain colours — no distant tree meshes, to
+// keep the draw load light.
+interface ForestChunk { cx: number; cz: number; near: THREE.InstancedMesh }
 const forestChunks: ForestChunk[] = [];
 const LOD_DIST = 1500;
 
@@ -87,10 +116,7 @@ export function updateForestLOD(camX: number, camZ: number): void {
   for (const c of forestChunks) {
     const d2 = (c.cx - camX) ** 2 + (c.cz - camZ) ** 2;
     const isNear = d2 < LOD_DIST * LOD_DIST;
-    if (c.near.visible !== isNear) {
-      c.near.visible = isNear;
-      c.far.visible = !isNear;
-    }
+    if (c.near.visible !== isNear) c.near.visible = isNear;
   }
 }
 
@@ -208,11 +234,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
       const mesh = new THREE.InstancedMesh(treeGeo, treeMat, spots.length);
       mesh.castShadow = false;
       mesh.raycast = () => {};
-      // far mesh: every 4th tree, fattened — swapped in beyond LOD_DIST
-      const farSpots = spots.filter((_, i) => i % 4 === 0);
-      const farMesh = new THREE.InstancedMesh(treeGeo, treeMat, farSpots.length);
-      farMesh.raycast = () => {};
-      farMesh.visible = false;
+      mesh.visible = false; // updateForestLOD shows it only when near the camera
       spots.forEach((s, i) => {
         dummy.position.set(s.x, s.h, s.z);
         dummy.scale.setScalar(0.85 + crng() * 0.8);
@@ -223,17 +245,8 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
           G.nodes.push({ kind: 'wood', x: s.x, z: s.z, amount: 120, alive: true, mesh: [mesh], index: i });
         }
       });
-      farSpots.forEach((s, i) => {
-        dummy.position.set(s.x, s.h, s.z);
-        dummy.scale.set(1.7, 1.35, 1.7);
-        dummy.rotation.set(0, 0, 0);
-        dummy.updateMatrix();
-        farMesh.setMatrixAt(i, dummy.matrix);
-      });
-      scene.add(mesh, farMesh);
-      forestChunks.push({
-        cx: x0 + CHUNK / 2, cz: z0 + CHUNK / 2, near: mesh, far: farMesh,
-      });
+      scene.add(mesh);
+      forestChunks.push({ cx: x0 + CHUNK / 2, cz: z0 + CHUNK / 2, near: mesh });
       totalTrees += spots.length;
     }
   }
