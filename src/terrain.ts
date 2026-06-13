@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { MAP, PALETTE } from './config';
+import { cobbleMaterial } from './materials';
 
 // ---- real-world digital elevation model (public/dem.bin, see scripts/fetch-dem.mjs) ----
 // World coords: x east (m), z south (m), origin at the bbox centre. Heights in
@@ -115,6 +116,35 @@ export function terrainHeight(x: number, z: number): number {
   return h;
 }
 
+// The rendered terrain mesh (buildTerrainMesh) is a coarse grid: its surface
+// linearly interpolates terrainHeight between vertices spaced TERR_SEG apart,
+// so it does NOT match the full-res terrainHeight between those vertices. Things
+// that must sit *on the visible ground* (villagers) use this, which reproduces
+// the mesh's own interpolation — otherwise they sink into concave ground.
+export const TERR_SEG_X = 380;
+export const TERR_SEG_Z = 440;
+
+export function surfaceHeight(x: number, z: number): number {
+  const gx = MAP.width / TERR_SEG_X, gz = MAP.depth / TERR_SEG_Z;
+  const cx = Math.min(MAP.maxX, Math.max(MAP.minX, x));
+  const cz = Math.min(MAP.maxZ, Math.max(MAP.minZ, z));
+  const ix = Math.min(TERR_SEG_X - 1, Math.floor((cx - MAP.minX) / gx));
+  const iz = Math.min(TERR_SEG_Z - 1, Math.floor((cz - MAP.minZ) / gz));
+  const x0 = MAP.minX + ix * gx, z0 = MAP.minZ + iz * gz;
+  const tx = (cx - x0) / gx, tz = (cz - z0) / gz;
+  // PlaneGeometry splits each quad into two triangles along the b–d diagonal:
+  // a=(0,0) b=(0,1) c=(1,1) d=(1,0). Pick the triangle this point lands in and
+  // interpolate its plane exactly, so a unit stands flush on the rendered face.
+  const ha = terrainHeight(x0, z0);          // (0,0)
+  const hb = terrainHeight(x0, z0 + gz);      // (0,1)
+  const hc = terrainHeight(x0 + gx, z0 + gz); // (1,1)
+  const hd = terrainHeight(x0 + gx, z0);      // (1,0)
+  if (tx + tz <= 1) {
+    return ha + (hd - ha) * tx + (hb - ha) * tz;
+  }
+  return (hb - hc + hd) + (hc - hb) * tx + (hc - hd) * tz;
+}
+
 export function terrainSlope(x: number, z: number): number {
   const e = 6;
   const hx = terrainHeight(x + e, z) - terrainHeight(x - e, z);
@@ -155,8 +185,7 @@ export function roadDistance(x: number, z: number): number {
 
 // ---- meshes ----
 export function buildTerrainMesh(): THREE.Mesh {
-  const segX = 380, segZ = 440;
-  const geo = new THREE.PlaneGeometry(MAP.width, MAP.depth, segX, segZ);
+  const geo = new THREE.PlaneGeometry(MAP.width, MAP.depth, TERR_SEG_X, TERR_SEG_Z);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
@@ -194,6 +223,63 @@ export function buildTerrainMesh(): THREE.Mesh {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.name = 'terrain';
+  return mesh;
+}
+
+// resample a polyline into ~`step`-metre points (keeps the path smooth when draped)
+function resamplePath(path: [number, number][], step: number): [number, number][] {
+  const out: [number, number][] = [path[0]];
+  for (let i = 1; i < path.length; i++) {
+    const [ax, az] = path[i - 1], [bx, bz] = path[i];
+    const segLen = Math.hypot(bx - ax, bz - az);
+    const n = Math.max(1, Math.round(segLen / step));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      out.push([ax + (bx - ax) * t, az + (bz - az) * t]);
+    }
+  }
+  return out;
+}
+
+// a cobbled road ribbon draped over the terrain along the historical road network
+let roadMat: THREE.MeshStandardMaterial | null = null;
+export function buildRoadMesh(): THREE.Mesh {
+  const half = 2.6;   // road half-width (m)
+  const lift = 0.14;  // sit just above the ground to avoid z-fighting
+  const verts: number[] = [], uvs: number[] = [], idx: number[] = [];
+  let vbase = 0;
+  for (const road of ROADS) {
+    const pts = resamplePath(road, 3);
+    if (pts.length < 2) continue;
+    let cum = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const [x, z] = pts[i];
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      let dx = b[0] - a[0], dz = b[1] - a[1];
+      const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
+      const px = -dz, pz = dx; // left-perpendicular
+      const lx = x + px * half, lz = z + pz * half;
+      const rx = x - px * half, rz = z - pz * half;
+      if (i > 0) cum += Math.hypot(x - pts[i - 1][0], z - pts[i - 1][1]);
+      verts.push(lx, surfaceHeight(lx, lz) + lift, lz, rx, surfaceHeight(rx, rz) + lift, rz);
+      const v = cum / 3.2;
+      uvs.push(0, v, 1.7, v);
+    }
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = vbase + i * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    vbase += pts.length * 2;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  if (!roadMat) roadMat = cobbleMaterial();
+  const mesh = new THREE.Mesh(geo, roadMat);
+  mesh.receiveShadow = true;
+  mesh.name = 'road';
   return mesh;
 }
 

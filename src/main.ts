@@ -1,13 +1,14 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { START } from './config';
-import { buildWorld } from './world';
+import { buildWorld, updateForestLOD } from './world';
 import { G } from './state';
 import { Building, setOnBuildingComplete } from './buildings';
 import { Villager } from './units';
 import { initEras, updateEras, ERAS } from './eras';
 import { initInput, CameraRig } from './input';
 import { initMinimap, drawMinimap } from './minimap';
-import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast } from './ui';
+import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus } from './ui';
 import { loadDem, lonLatToWorld, setRoads } from './terrain';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
@@ -17,9 +18,19 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// stylized-realism pipeline: filmic tone-mapping + sRGB so PBR materials read right
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 16000);
+
+// soft image-based lighting so PBR materials catch ambient sky/ground bounce
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
+renderer.setRenderTarget(null); // PMREM can leave its offscreen target bound
 
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -57,6 +68,7 @@ async function boot(): Promise<void> {
   G.resources.wood = START.wood;
   G.resources.stone = START.stone;
   G.resources.food = START.food;
+  G.resources.coin = START.coin;
 
   new Building('camp', START.camp.x, START.camp.z, 'done', scene, 0.4);
   for (let i = 0; i < START.villagers; i++) {
@@ -74,6 +86,7 @@ async function boot(): Promise<void> {
   rig = initInput(canvas, camera, world);
   rig.jumpTo(START.camp.x - 30, START.camp.z - 40);
   initMinimap((x, z) => rig.jumpTo(x, z));
+  initIdleCycler();
 
   // ---- intro ----
   document.getElementById('start-btn')!.addEventListener('click', () => {
@@ -90,6 +103,7 @@ async function boot(): Promise<void> {
   const dbg = window as unknown as Record<string, unknown>;
   dbg.G = G;
   dbg.rig = rig;
+  dbg.scene = scene;
   import('./terrain').then((t) => { dbg.terrain = t; });
   dbg.__render = () => { renderer.render(scene, camera); return renderer.info.render.calls; };
 }
@@ -97,6 +111,24 @@ async function boot(): Promise<void> {
 function spawnVillager(x: number, z: number): void {
   new Villager(x, z, scene);
   updateHud();
+}
+
+// ---- idle-villager cycler: jump to and select the next idle settler ----
+let idleCursor = 0;
+function selectNextIdle(): void {
+  const idle = G.villagers.filter((v) => v.isIdle);
+  if (idle.length === 0) { toast('No idle villagers.'); return; }
+  const v = idle[idleCursor % idle.length];
+  idleCursor++;
+  setSelection([v], null);
+  rig.jumpTo(v.x, v.z);
+}
+
+function initIdleCycler(): void {
+  document.getElementById('idle-btn')!.addEventListener('click', selectNextIdle);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') { e.preventDefault(); selectNextIdle(); }
+  });
 }
 
 // ---- main loop ----
@@ -125,7 +157,7 @@ function tick(now: number): void {
     updateEras(dt);
 
     hudTimer += dt;
-    if (hudTimer > 0.2) { hudTimer = 0; updateHud(); }
+    if (hudTimer > 0.2) { hudTimer = 0; updateHud(); updateSelectionStatus(); }
     panelTimer += dt;
     if (panelTimer > 0.5) {
       panelTimer = 0;
@@ -133,7 +165,11 @@ function tick(now: number): void {
     }
   }
   mapTimer += dt;
-  if (mapTimer > 0.25) { mapTimer = 0; drawMinimap(rig.target, rig.yaw, rig.dist * 1.6); }
+  if (mapTimer > 0.25) {
+    mapTimer = 0;
+    drawMinimap(rig.target, rig.yaw, rig.dist * 1.6);
+    updateForestLOD(rig.target.x, rig.target.z);
+  }
 
   renderer.render(scene, camera);
 }

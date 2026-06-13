@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MAP, PALETTE, START } from './config';
-import { terrainHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRiverMesh, registerFlatSpot, roadDistance, lonLatToWorld, TREELINE } from './terrain';
+import { terrainHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRiverMesh, buildRoadMesh, registerFlatSpot, roadDistance, lonLatToWorld, TREELINE } from './terrain';
 import { PLOTS } from './plots';
 import { G, ResourceNode } from './state';
 
@@ -49,6 +50,7 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   const terrain = buildTerrainMesh();
   scene.add(terrain);
   scene.add(buildRiverMesh());
+  scene.add(buildRoadMesh());
 
   const gatherables = scatterNature(scene);
 
@@ -71,6 +73,23 @@ const CLEARING_GEOS = [
 
 let clearings: { x: number; z: number; r: number }[] = [];
 
+// forest level-of-detail: chunks near the camera show every tree, distant
+// chunks swap to a sparse fat-tree proxy
+interface ForestChunk { cx: number; cz: number; near: THREE.InstancedMesh; far: THREE.InstancedMesh }
+const forestChunks: ForestChunk[] = [];
+const LOD_DIST = 1500;
+
+export function updateForestLOD(camX: number, camZ: number): void {
+  for (const c of forestChunks) {
+    const d2 = (c.cx - camX) ** 2 + (c.cz - camZ) ** 2;
+    const isNear = d2 < LOD_DIST * LOD_DIST;
+    if (c.near.visible !== isNear) {
+      c.near.visible = isNear;
+      c.far.visible = !isNear;
+    }
+  }
+}
+
 function inClearing(x: number, z: number): boolean {
   for (const c of clearings) {
     const dx = x - c.x, dz = z - c.z;
@@ -79,9 +98,31 @@ function inClearing(x: number, z: number): boolean {
   return false;
 }
 
-const AMBIENT_MIN_H = 420;        // below this: harvestable gameplay trees
 const RIVER_MEADOW = 45;          // open strip along the Prahova
 const EAST_PASTURE_H = 520;       // Baiu side turns to grass above this
+
+// merged spruce: trunk + two cones, vertex-colored, one draw call per chunk
+function buildTreeGeometry(): THREE.BufferGeometry {
+  const paint = (g: THREE.BufferGeometry, color: number): THREE.BufferGeometry => {
+    const c = new THREE.Color(color);
+    const count = g.attributes.position.count;
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return g;
+  };
+  const trunk = paint(new THREE.CylinderGeometry(0.45, 0.65, 3.2, 5), PALETTE.trunk);
+  trunk.translate(0, 1.6, 0);
+  const cone1 = paint(new THREE.ConeGeometry(3.1, 6.5, 6), PALETTE.pineDark);
+  cone1.translate(0, 5.2, 0);
+  const cone2 = paint(new THREE.ConeGeometry(2.2, 5, 6), PALETTE.pineMid);
+  cone2.translate(0, 8.6, 0);
+  const merged = mergeGeometries([trunk, cone1, cone2]);
+  trunk.dispose(); cone1.dispose(); cone2.dispose();
+  return merged;
+}
 
 // deterministic forest predicate — used for the minimap tint
 export function forestedAt(x: number, z: number): boolean {
@@ -103,7 +144,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
     const w = lonLatToWorld(c.lon, c.lat);
     return { x: w.x, z: w.z, r: c.r };
   });
-  clearings.push({ x: START.camp.x, z: START.camp.z, r: 130 }); // the hamlet's meadow
+  clearings.push({ x: START.camp.x, z: START.camp.z, r: 100 }); // the hamlet's meadow
 
   const clearOf = (x: number, z: number, margin: number): boolean => {
     for (const p of PLOTS) {
@@ -117,109 +158,94 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
     return true;
   };
 
-  // --- gameplay forest: harvestable trees blanketing the lower valley,
-  // including the future town site (it is 1690 — there is no town yet) ---
-  const treeSpots: { x: number; z: number }[] = [];
-  for (let tries = 0; tries < 500000 && treeSpots.length < 20000; tries++) {
-    const x = MAP.minX + 14 + rng() * (MAP.width - 28);
-    const z = MAP.minZ + 14 + rng() * (MAP.depth - 28);
-    const h = terrainHeight(x, z);
-    if (h >= AMBIENT_MIN_H) continue; // upper forest is the ambient tier
-    const slope = terrainSlope(x, z);
-    if (slope > 1.3) continue;
-    if (inClearing(x, z)) continue;
-    if (x > riverX(z) + 150 && h > EAST_PASTURE_H) continue;
-    if (!clearOf(x, z, 4)) continue;
-    if (rng() > 0.78) continue; // near-solid forest with small natural gaps
-    treeSpots.push({ x, z });
-  }
-  // starter woodlots: groves on the valley floor near the hamlet
-  const groves = [
-    { x: START.camp.x + 60, z: START.camp.z - 40, r: 35, count: 40 },
-    { x: START.camp.x - 55, z: START.camp.z + 50, r: 30, count: 30 },
-    { x: START.camp.x - 20, z: START.camp.z - 85, r: 25, count: 22 },
-  ];
-  for (const g of groves) {
-    for (let i = 0; i < g.count; i++) {
-      const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * g.r;
-      const x = g.x + Math.cos(a) * d, z = g.z + Math.sin(a) * d;
-      if (!clearOf(x, z, 3) || !inMap(x, z)) continue;
-      treeSpots.push({ x, z });
+  // --- the forest: real density (~9m spacing), covering everything below the
+  // treeline including the future town site (anno 1690 — no town yet).
+  // One merged tree geometry, one InstancedMesh per ~1km terrain chunk, so the
+  // GPU frustum-culls whole chunks. Trees below HARVEST_MAX_H are resource
+  // nodes; higher forest is scenery. Picking goes through terrain-hit +
+  // nearest-node lookup, never the instances. ---
+  const treeGeo = buildTreeGeometry();
+  const treeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const HARVEST_MAX_H = 420;
+  const SPACING = 9;
+  const CHUNK = 1024;
+  const FILL = 0.8;
+  let totalTrees = 0;
+
+  const chunksX = Math.ceil(MAP.width / CHUNK);
+  const chunksZ = Math.ceil(MAP.depth / CHUNK);
+  for (let cz = 0; cz < chunksZ; cz++) {
+    for (let cx = 0; cx < chunksX; cx++) {
+      const crng = mulberry32(((cx * 73856093) ^ (cz * 19349663) ^ 1883) >>> 0);
+      const x0 = MAP.minX + cx * CHUNK;
+      const z0 = MAP.minZ + cz * CHUNK;
+      const spots: { x: number; z: number; h: number }[] = [];
+      for (let gz = z0; gz < Math.min(z0 + CHUNK, MAP.maxZ - 14); gz += SPACING) {
+        for (let gx = x0; gx < Math.min(x0 + CHUNK, MAP.maxX - 14); gx += SPACING) {
+          const keep = crng() <= FILL;
+          const jx = (crng() - 0.5) * SPACING * 0.9;
+          const jz = (crng() - 0.5) * SPACING * 0.9;
+          if (!keep) continue;
+          const x = gx + jx, z = gz + jz;
+          if (!inMap(x, z)) continue;
+          const h = terrainHeight(x, z);
+          if (h > TREELINE) continue;
+          if (terrainSlope(x, z) > 1.35) continue;
+          if (inClearing(x, z)) continue;
+          if (x > riverX(z) + 150 && h > EAST_PASTURE_H) continue; // Baiu pasture
+          if (!clearOf(x, z, 4)) continue;
+          spots.push({ x, z, h });
+        }
+      }
+      if (spots.length === 0) continue;
+      // near mesh: every tree, full detail. Trees don't cast shadows — they're
+      // background filler and dropping them from the shadow pass frees the GPU
+      // budget for the detailed PBR buildings.
+      const mesh = new THREE.InstancedMesh(treeGeo, treeMat, spots.length);
+      mesh.castShadow = false;
+      mesh.raycast = () => {};
+      // far mesh: every 4th tree, fattened — swapped in beyond LOD_DIST
+      const farSpots = spots.filter((_, i) => i % 4 === 0);
+      const farMesh = new THREE.InstancedMesh(treeGeo, treeMat, farSpots.length);
+      farMesh.raycast = () => {};
+      farMesh.visible = false;
+      spots.forEach((s, i) => {
+        dummy.position.set(s.x, s.h, s.z);
+        dummy.scale.setScalar(0.85 + crng() * 0.8);
+        dummy.rotation.set(0, crng() * Math.PI * 2, 0);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        if (s.h < HARVEST_MAX_H) {
+          G.nodes.push({ kind: 'wood', x: s.x, z: s.z, amount: 120, alive: true, mesh: [mesh], index: i });
+        }
+      });
+      farSpots.forEach((s, i) => {
+        dummy.position.set(s.x, s.h, s.z);
+        dummy.scale.set(1.7, 1.35, 1.7);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        farMesh.setMatrixAt(i, dummy.matrix);
+      });
+      scene.add(mesh, farMesh);
+      forestChunks.push({
+        cx: x0 + CHUNK / 2, cz: z0 + CHUNK / 2, near: mesh, far: farMesh,
+      });
+      totalTrees += spots.length;
     }
   }
-
-  const trunkGeo = new THREE.CylinderGeometry(0.45, 0.65, 3.2, 5);
-  trunkGeo.translate(0, 1.6, 0);
-  const cone1Geo = new THREE.ConeGeometry(3.1, 6.5, 6);
-  cone1Geo.translate(0, 5.2, 0);
-  const cone2Geo = new THREE.ConeGeometry(2.2, 5, 6);
-  cone2Geo.translate(0, 8.6, 0);
-  const trunkMat = new THREE.MeshLambertMaterial({ color: PALETTE.trunk });
-  const pine1Mat = new THREE.MeshLambertMaterial({ color: PALETTE.pineDark });
-  const pine2Mat = new THREE.MeshLambertMaterial({ color: PALETTE.pineMid });
-
-  const n = treeSpots.length;
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, n);
-  const cones1 = new THREE.InstancedMesh(cone1Geo, pine1Mat, n);
-  const cones2 = new THREE.InstancedMesh(cone2Geo, pine2Mat, n);
-  trunks.castShadow = cones1.castShadow = cones2.castShadow = true;
-
-  treeSpots.forEach((s, i) => {
-    const y = terrainHeight(s.x, s.z);
-    const sc = 0.85 + rng() * 0.8;
-    dummy.position.set(s.x, y, s.z);
-    dummy.scale.setScalar(sc);
-    dummy.rotation.set(0, rng() * Math.PI * 2, 0);
-    dummy.updateMatrix();
-    trunks.setMatrixAt(i, dummy.matrix);
-    cones1.setMatrixAt(i, dummy.matrix);
-    cones2.setMatrixAt(i, dummy.matrix);
-    G.nodes.push({
-      kind: 'wood', x: s.x, z: s.z, amount: 120, alive: true,
-      mesh: [trunks, cones1, cones2], index: i,
-    });
-  });
-  scene.add(trunks, cones1, cones2);
-
-  // --- ambient forest: the mountainsides up to the treeline. Pure scenery —
-  // not harvestable, no shadows, excluded from raycasting for performance. ---
-  const ambientSpots: { x: number; z: number }[] = [];
-  for (let tries = 0; tries < 900000 && ambientSpots.length < 42000; tries++) {
-    const x = MAP.minX + 14 + rng() * (MAP.width - 28);
-    const z = MAP.minZ + 14 + rng() * (MAP.depth - 28);
-    const h = terrainHeight(x, z);
-    if (h < AMBIENT_MIN_H || h > TREELINE) continue;
-    if (terrainSlope(x, z) > 1.45) continue;
-    if (inClearing(x, z)) continue;
-    if (x > riverX(z) + 150 && h > EAST_PASTURE_H) continue; // Baiu pasture
-    if (roadDistance(x, z) < 6) continue;
-    if (rng() > 0.85) continue;
-    ambientSpots.push({ x, z });
-  }
-  const amb1 = new THREE.InstancedMesh(cone1Geo, pine1Mat, ambientSpots.length);
-  const amb2 = new THREE.InstancedMesh(cone2Geo, pine2Mat, ambientSpots.length);
-  amb1.raycast = () => {}; // skip in picking
-  amb2.raycast = () => {};
-  ambientSpots.forEach((s, i) => {
-    dummy.position.set(s.x, terrainHeight(s.x, s.z), s.z);
-    dummy.scale.setScalar(1.3 + rng() * 0.9);
-    dummy.rotation.set(0, rng() * Math.PI * 2, 0);
-    dummy.updateMatrix();
-    amb1.setMatrixAt(i, dummy.matrix);
-    amb2.setMatrixAt(i, dummy.matrix);
-  });
-  scene.add(amb1, amb2);
+  console.log(`forest: ${totalTrees} trees, ${G.nodes.length} harvestable, ${forestChunks.length} chunks`);
 
   // --- stone outcrops (real-world locations on the lower slopes) ---
   const rockGeo = new THREE.DodecahedronGeometry(2.4, 0);
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x9a958c });
   const rockSpots: { x: number; z: number }[] = [];
   const rockGeos = [
-    { lat: 45.3500, lon: 25.5390, r: 60, count: 22 },  // quarry slope west of town
-    { lat: 45.3620, lon: 25.5520, r: 45, count: 14 },  // upper valley outcrops
-    { lat: 45.3525, lon: 25.5640, r: 50, count: 12 },  // Baiu side
-    { lat: 45.3395, lon: 25.5455, r: 50, count: 14 },  // southern slopes
-    { lat: 45.3440, lon: 25.5495, r: 40, count: 12 },  // riverside boulders near the hamlet
+    { lat: 45.3468, lon: 25.5548, r: 42, count: 26 },  // hamlet quarry-slope — reachable from the start camp
+    { lat: 45.3500, lon: 25.5390, r: 60, count: 24 },  // quarry slope west of town
+    { lat: 45.3620, lon: 25.5520, r: 45, count: 16 },  // upper valley outcrops
+    { lat: 45.3525, lon: 25.5640, r: 50, count: 14 },  // Baiu side
+    { lat: 45.3395, lon: 25.5455, r: 50, count: 16 },  // southern slopes
+    { lat: 45.3440, lon: 25.5495, r: 40, count: 16 },  // riverside boulders near the hamlet
   ];
   for (const c of rockGeos) {
     const w = lonLatToWorld(c.lon, c.lat);
@@ -227,7 +253,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
       const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * c.r;
       const x = w.x + Math.cos(a) * d, z = w.z + Math.sin(a) * d;
       if (!inMap(x, z) || !clearOf(x, z, 2)) continue;
-      if (terrainSlope(x, z) > 1.2) continue;
+      if (terrainSlope(x, z) > 1.45) continue;
       rockSpots.push({ x, z });
     }
   }
@@ -280,7 +306,9 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   });
   scene.add(bushes);
 
-  return [trunks, cones1, cones2, rocks, bushes];
+  // raycast targets for picking: rocks and bushes only — trees are picked via
+  // terrain hit + nearest node (see input.ts)
+  return [rocks, bushes];
 }
 
 // hide a depleted node's instances by scaling them to zero
@@ -290,6 +318,19 @@ export function hideNode(node: ResourceNode): void {
     m.setMatrixAt(node.index, zero);
     m.instanceMatrix.needsUpdate = true;
   }
+}
+
+// nearest living node of any kind to a ground point — forgiving right-click /
+// hover picking, so rocks and bushes are as easy to target as trees
+export function nearestHarvestable(x: number, z: number, maxDist: number): ResourceNode | null {
+  let best: ResourceNode | null = null;
+  let bd = maxDist * maxDist;
+  for (const n of G.nodes) {
+    if (!n.alive) continue;
+    const d = (n.x - x) ** 2 + (n.z - z) ** 2;
+    if (d < bd) { bd = d; best = n; }
+  }
+  return best;
 }
 
 export function nodeFromInstance(mesh: THREE.InstancedMesh, instanceId: number): ResourceNode | null {

@@ -4,8 +4,8 @@ import { terrainHeight, terrainSlope, inRiver, inMap } from './terrain';
 import { G, canAfford, pay } from './state';
 import { Building, DEFS } from './buildings';
 import type { Villager } from './units';
-import { nodeFromInstance, hideNode, WorldRefs } from './world';
-import { setSelection, refreshSelectionPanel, setGhostRequest, toast } from './ui';
+import { nodeFromInstance, nearestHarvestable, hideNode, WorldRefs } from './world';
+import { setSelection, refreshSelectionPanel, setGhostRequest, toast, showNodeTip, hideNodeTip } from './ui';
 
 export interface CameraRig {
   target: { x: number; z: number };
@@ -39,7 +39,20 @@ export function initInput(
 
   let pointerX = 0, pointerY = 0;
   let pointerSeen = false; // no edge-pan until the mouse has actually moved
-  window.addEventListener('pointermove', () => { pointerSeen = true; }, { once: true });
+  let pointerInside = true; // edge-pan pauses when the cursor leaves the window
+  window.addEventListener('pointermove', () => { pointerSeen = true; pointerInside = true; }, { once: true });
+  // stop edge-scrolling the moment the cursor leaves the page (e.g. to a 2nd monitor)
+  document.addEventListener('mouseleave', () => { pointerInside = false; });
+  document.addEventListener('mouseenter', () => { pointerInside = true; });
+  window.addEventListener('blur', () => { pointerInside = false; });
+
+  // keep the camera target inside a playable area inset from the rendered map edge
+  const MARGIN_X = MAP.width * 0.12;
+  const MARGIN_Z = MAP.depth * 0.12;
+  function clampTarget(): void {
+    rig.target.x = Math.min(MAP.maxX - MARGIN_X, Math.max(MAP.minX + MARGIN_X, rig.target.x));
+    rig.target.z = Math.min(MAP.maxZ - MARGIN_Z, Math.max(MAP.minZ + MARGIN_Z, rig.target.z));
+  }
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
 
@@ -90,7 +103,9 @@ export function initInput(
     if (!p) return;
     ghost.mesh.position.set(p.x, terrainHeight(p.x, p.z), p.z);
     const def = DEFS[ghost.key];
-    let valid = inMap(p.x, p.z) && !inRiver(p.x, p.z) && terrainSlope(p.x, p.z) < 0.4;
+    // buildings terrace their own ground (see Building.addFoundation), so they can
+    // sit on fairly steep slopes — only true cliffs and the river are off-limits
+    let valid = inMap(p.x, p.z) && !inRiver(p.x, p.z) && terrainSlope(p.x, p.z) < 0.95;
     if (valid) {
       for (const b of G.buildings) {
         const d2 = (b.x - p.x) ** 2 + (b.z - p.z) ** 2;
@@ -119,18 +134,27 @@ export function initInput(
     refreshSelectionPanel();
   }
 
-  // ---- selection: click + drag box ----
+  // ---- selection / map-drag: click, drag-to-pan, Shift+drag box-select ----
   const selbox = document.getElementById('selbox')!;
-  let dragStart: { x: number; y: number } | null = null;
+  let dragStart: { x: number; y: number } | null = null;  // left: click-select / box-select
   let dragging = false;
+  let rDragStart: { x: number; y: number } | null = null; // right: command / map-pan
+  let rDragging = false;
+  let panLast = { x: 0, y: 0 };
 
   canvas.addEventListener('pointerdown', (e) => {
     if (e.button === 0) {
       // Ctrl/Alt + left-drag orbits the camera (laptops without a middle button)
       if (e.ctrlKey || e.altKey) { orbit = { x: e.clientX, y: e.clientY }; return; }
       if (ghost) { placeGhost(); return; }
+      // left-click selects; left-drag box-selects villagers
       dragStart = { x: e.clientX, y: e.clientY };
       dragging = false;
+    } else if (e.button === 2) {
+      // right-click issues a command; right-drag pans the map (grab style)
+      rDragStart = { x: e.clientX, y: e.clientY };
+      panLast = { x: e.clientX, y: e.clientY };
+      rDragging = false;
     } else if (e.button === 1) {
       e.preventDefault();
       orbit = { x: e.clientX, y: e.clientY };
@@ -138,7 +162,7 @@ export function initInput(
   });
 
   window.addEventListener('pointermove', (e) => {
-    pointerX = e.clientX; pointerY = e.clientY;
+    pointerX = e.clientX; pointerY = e.clientY; pointerInside = true;
     if (orbit) {
       rig.yaw -= (e.clientX - orbit.x) * 0.005;
       rig.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, rig.pitch + (e.clientY - orbit.y) * 0.004));
@@ -153,10 +177,46 @@ export function initInput(
         selbox.style.width = `${Math.abs(dx)}px`; selbox.style.height = `${Math.abs(dy)}px`;
       }
     }
+    if (rDragStart) {
+      const dx = e.clientX - rDragStart.x, dy = e.clientY - rDragStart.y;
+      if (!rDragging && dx * dx + dy * dy > 36) { rDragging = true; canvas.style.cursor = 'grabbing'; }
+      if (rDragging) {
+        // grab-the-map: move the target so the world under the cursor follows it,
+        // rotation-aware so it always tracks the actual on-screen direction
+        const mdx = e.clientX - panLast.x, mdy = e.clientY - panLast.y;
+        panLast = { x: e.clientX, y: e.clientY };
+        const cos = Math.cos(rig.yaw), sin = Math.sin(rig.yaw);
+        const k = rig.dist / 620;
+        rig.target.x -= (cos * mdx + sin * mdy) * k;
+        rig.target.z -= (-sin * mdx + cos * mdy) * k;
+        clampTarget();
+      }
+    }
+    updateHoverTip(e.clientX, e.clientY);
   });
+
+  // ---- resource hover tooltip ----
+  const NODE_LABEL = { wood: 'Timber', stone: 'Stone', food: 'Berries' };
+  function updateHoverTip(cx: number, cy: number): void {
+    if (orbit || dragStart || rDragStart || ghost) { hideNodeTip(); return; }
+    const p = groundPoint(cx, cy);
+    const node = p ? nearestHarvestable(p.x, p.z, 6) : null;
+    if (!node) { hideNodeTip(); return; }
+    showNodeTip(cx, cy, `${NODE_LABEL[node.kind]} · ${Math.ceil(node.amount)} left`);
+  }
 
   window.addEventListener('pointerup', (e) => {
     if (orbit) { orbit = null; return; }
+    if (e.button === 2 && rDragStart) {
+      canvas.style.cursor = '';
+      const wasDrag = rDragging;
+      rDragStart = null;
+      rDragging = false;
+      if (ghost) { cancelGhost(); return; }
+      if (wasDrag) return;                   // it was a map-pan, not a command
+      issueCommand(e.clientX, e.clientY);    // right-click: move / gather / build
+      return;
+    }
     if (e.button !== 0 || !dragStart) return;
     selbox.style.display = 'none';
     if (dragging) {
@@ -197,12 +257,12 @@ export function initInput(
     dragging = false;
   });
 
-  // ---- right-click commands ----
-  canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (ghost) { cancelGhost(); return; }
+  // ---- right-click commands (issued from pointerup when it wasn't a drag) ----
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  function issueCommand(cx: number, cy: number): void {
     if (G.selected.length === 0) return;
-    const hits = raycastAt(e.clientX, e.clientY, world.scene.children);
+    const hits = raycastAt(cx, cy, world.scene.children);
     for (const h of hits) {
       // resource node?
       if (h.object instanceof THREE.InstancedMesh && h.instanceId !== undefined) {
@@ -225,6 +285,13 @@ export function initInput(
         return;
       }
       if (h.object.name === 'terrain') {
+        // a click on/near any resource: trees aren't raycast (too many) and rocks
+        // are small, so snap to the nearest living node of any kind near the hit
+        const node = nearestHarvestable(h.point.x, h.point.z, 8);
+        if (node) {
+          for (const v of G.selected) v.orderGather(node);
+          return;
+        }
         // formation: spread move targets in a loose grid
         const n = G.selected.length;
         const cols = Math.ceil(Math.sqrt(n));
@@ -236,7 +303,7 @@ export function initInput(
         return;
       }
     }
-  });
+  }
 
   // ---- camera ----
   let orbit: { x: number; y: number } | null = null;
@@ -252,6 +319,7 @@ export function initInput(
         const f = 1 - rig.dist / oldDist;
         rig.target.x += (p.x - rig.target.x) * f;
         rig.target.z += (p.z - rig.target.z) * f;
+        clampTarget();
       }
     }
   }, { passive: false });
@@ -259,25 +327,29 @@ export function initInput(
   const EDGE = 14;
   function update(dt: number): void {
     const panSpeed = rig.dist * 0.85 * dt;
-    let mx = 0, mz = 0;
-    if (keys.has('w') || keys.has('arrowup')) mz -= 1;
-    if (keys.has('s') || keys.has('arrowdown')) mz += 1;
-    if (keys.has('a') || keys.has('arrowleft')) mx -= 1;
-    if (keys.has('d') || keys.has('arrowright')) mx += 1;
-    if (pointerSeen) {
-      if (pointerX < EDGE) mx -= 1;
-      if (pointerX > window.innerWidth - EDGE) mx += 1;
-      if (pointerY < EDGE) mz -= 1;
-      if (pointerY > window.innerHeight - EDGE && pointerY < window.innerHeight - 2) mz += 1;
+    // fwd = toward the top of the screen, rgt = toward the right — both in screen
+    // space, then rotated by the camera yaw so they always match what you see
+    let fwd = 0, rgt = 0;
+    if (keys.has('w') || keys.has('arrowup')) fwd += 1;
+    if (keys.has('s') || keys.has('arrowdown')) fwd -= 1;
+    if (keys.has('a') || keys.has('arrowleft')) rgt -= 1;
+    if (keys.has('d') || keys.has('arrowright')) rgt += 1;
+    // edge-pan only while the cursor is actually inside the window — moving to a
+    // second screen must not keep scrolling the map
+    if (pointerSeen && pointerInside) {
+      if (pointerX < EDGE) rgt -= 1;
+      if (pointerX > window.innerWidth - EDGE) rgt += 1;
+      if (pointerY < EDGE) fwd += 1;
+      if (pointerY > window.innerHeight - EDGE && pointerY < window.innerHeight - 2) fwd -= 1;
     }
     if (keys.has('q')) rig.yaw += dt * 1.6;
     if (keys.has('e')) rig.yaw -= dt * 1.6;
-    if (mx !== 0 || mz !== 0) {
+    if (fwd !== 0 || rgt !== 0) {
       const cos = Math.cos(rig.yaw), sin = Math.sin(rig.yaw);
-      rig.target.x += (mx * cos - mz * sin) * panSpeed;
-      rig.target.z += (-mx * sin - mz * cos) * panSpeed;
-      rig.target.x = Math.min(MAP.maxX - 30, Math.max(MAP.minX + 30, rig.target.x));
-      rig.target.z = Math.min(MAP.maxZ - 30, Math.max(MAP.minZ + 30, rig.target.z));
+      // screen-up on the ground = (-sin, -cos); screen-right = (cos, -sin)
+      rig.target.x += (-sin * fwd + cos * rgt) * panSpeed;
+      rig.target.z += (-cos * fwd - sin * rgt) * panSpeed;
+      clampTarget();
     }
     const ty = terrainHeight(rig.target.x, rig.target.z);
     const cy = Math.sin(rig.pitch) * rig.dist;
@@ -302,6 +374,6 @@ export function initInput(
     get yaw() { return rig.yaw; },
     get dist() { return rig.dist; },
     update,
-    jumpTo: (x: number, z: number) => { rig.target.x = x; rig.target.z = z; },
+    jumpTo: (x: number, z: number) => { rig.target.x = x; rig.target.z = z; clampTarget(); },
   } as CameraRig;
 }

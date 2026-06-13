@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { terrainHeight, walkable } from './terrain';
+import { terrainHeight, surfaceHeight, walkable } from './terrain';
 import { G, ResourceNode } from './state';
-import { Building, nearestDropoff } from './buildings';
+import { Building, nearestDropoff, gatherBonusAt } from './buildings';
 import { hideNode } from './world';
 
 type Task =
@@ -10,16 +10,53 @@ type Task =
   | { kind: 'gather'; node: ResourceNode; sub: 'go' | 'work' | 'return' }
   | { kind: 'build'; building: Building; sub: 'go' | 'work' };
 
-const bodyMat = new THREE.MeshLambertMaterial({ color: 0xcfc4a8 }); // homespun wool
-const coatMat = new THREE.MeshLambertMaterial({ color: 0x7d6649 });
-const headMat = new THREE.MeshLambertMaterial({ color: 0xd9b08c });
-const hatMat = new THREE.MeshLambertMaterial({ color: 0x4a3a28 });
+const cloth = (color: number, rough = 0.86): THREE.MeshStandardMaterial =>
+  new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
+const metal = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.4, metalness: 0.7 });
+const toolWood = cloth(0x6e5238, 0.8);
+
+const skinMats = [0xd9b08c, 0xc69464, 0xe3bd97].map((c) => cloth(c, 0.7));
 const ringMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
-const carryMats: Record<string, THREE.MeshLambertMaterial> = {
-  wood: new THREE.MeshLambertMaterial({ color: 0x6e5238 }),
-  stone: new THREE.MeshLambertMaterial({ color: 0x9a958c }),
-  food: new THREE.MeshLambertMaterial({ color: 0xc2773a }),
+const carryMats: Record<string, THREE.MeshStandardMaterial> = {
+  wood: cloth(0x6e5238), stone: cloth(0x9a958c, 0.95), food: cloth(0xc2773a),
 };
+
+// a held/worn tool, built once and cloned per villager
+function axeTool(): THREE.Group {
+  const g = new THREE.Group();
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 6), toolWood);
+  haft.position.set(0.82, 1.05, 0.25); haft.rotation.z = 0.35;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.34, 0.5), metal);
+  head.position.set(1.02, 1.62, 0.25);
+  g.add(haft, head);
+  return g;
+}
+function malletTool(): THREE.Group {
+  const g = new THREE.Group();
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.1, 6), toolWood);
+  haft.position.set(0.82, 0.9, 0.25); haft.rotation.z = 0.3;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.3, 0.3), cloth(0x7a5b3a, 0.8));
+  head.position.set(0.98, 1.4, 0.25);
+  g.add(haft, head);
+  return g;
+}
+function basketTool(): THREE.Group {
+  const g = new THREE.Group();
+  const basket = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.32, 0.55, 8), cloth(0x7a5a32, 0.9));
+  basket.position.set(0, 1.5, -0.62); // worn on the back
+  g.add(basket);
+  return g;
+}
+
+export type Profession = 'woodcutter' | 'mason' | 'forager' | 'builder' | 'peasant';
+interface Outfit { name: Profession; tunic: THREE.Material; coat: THREE.Material; hat: THREE.Material; tool?: () => THREE.Group }
+const OUTFITS: Outfit[] = [
+  { name: 'woodcutter', tunic: cloth(0x6f7a46), coat: cloth(0x47381f), hat: cloth(0x3a2c18), tool: axeTool },
+  { name: 'mason',      tunic: cloth(0x9a958c), coat: cloth(0x55493d), hat: cloth(0x6b5a44), tool: malletTool },
+  { name: 'forager',    tunic: cloth(0xb0894a), coat: cloth(0x77562f), hat: cloth(0x8a6a3a), tool: basketTool },
+  { name: 'builder',    tunic: cloth(0xc9bda0), coat: cloth(0x7d6649), hat: cloth(0x584427) },
+  { name: 'peasant',    tunic: cloth(0xcabfa0), coat: cloth(0x6e5a40), hat: cloth(0x4a3a28) },
+];
 
 let nextId = 1;
 
@@ -33,22 +70,30 @@ export class Villager {
   carry = 0;
   carryKind: 'wood' | 'stone' | 'food' = 'wood';
   speed = 18;
+  profession: Profession;
   private workTimer = 0;
   private bobPhase = Math.random() * Math.PI * 2;
 
-  constructor(x: number, z: number, scene: THREE.Scene) {
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, 1.7, 7), bodyMat);
+  constructor(x: number, z: number, scene: THREE.Scene, profession?: Profession) {
+    const outfit = profession
+      ? OUTFITS.find((o) => o.name === profession)!
+      : OUTFITS[Math.floor(Math.random() * OUTFITS.length)];
+    this.profession = outfit.name;
+    const skin = skinMats[Math.floor(Math.random() * skinMats.length)];
+
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, 1.7, 8), outfit.tunic);
     body.position.y = 0.85;
     body.castShadow = true;
     this.body = body;
-    const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.8, 0.8, 7), coatMat);
+    const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.8, 0.8, 8), outfit.coat);
     coat.position.y = 0.55;
     coat.castShadow = true;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 7), headMat);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 9, 7), skin);
     head.position.y = 2.0;
     head.castShadow = true;
-    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.46, 0.42, 7), hatMat);
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.46, 0.42, 8), outfit.hat);
     hat.position.y = 2.35;
+    hat.castShadow = true;
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 24), ringMat);
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.12;
@@ -59,7 +104,8 @@ export class Villager {
     carryMesh.visible = false;
     this.carryMesh = carryMesh;
     this.group.add(body, coat, head, hat, ring, carryMesh);
-    this.group.position.set(x, terrainHeight(x, z), z);
+    if (outfit.tool) this.group.add(outfit.tool());
+    this.group.position.set(x, surfaceHeight(x, z), z);
     this.group.userData.villager = this;
     for (const c of [body, coat, head, hat]) c.userData.villager = this;
     scene.add(this.group);
@@ -69,7 +115,32 @@ export class Villager {
   get x(): number { return this.group.position.x; }
   get z(): number { return this.group.position.z; }
 
+  get isIdle(): boolean { return this.task.kind === 'idle'; }
+
+  // human-readable description of what this villager is doing — for the panel
+  describeActivity(): string {
+    const t = this.task;
+    const load = this.carry > 0 ? ` (carrying ${this.carry} ${this.carryKind})` : '';
+    switch (t.kind) {
+      case 'idle': return 'Idle — awaiting orders';
+      case 'move': return `Walking${load}`;
+      case 'gather': {
+        const what = { wood: 'timber', stone: 'stone', food: 'berries' }[t.node.kind];
+        if (t.sub === 'return') return `Hauling ${what} to the drop-off`;
+        if (t.sub === 'go') return `Going to gather ${what}`;
+        return `Gathering ${what}${load}`;
+      }
+      case 'build':
+        return t.sub === 'go' ? `Walking to ${t.building.def.name}` : `Building the ${t.building.def.name}`;
+    }
+  }
+
   setSelected(sel: boolean): void { this.ring.visible = sel; }
+
+  // stop building/approaching a structure that's being demolished
+  releaseFrom(b: Building): void {
+    if (this.task.kind === 'build' && this.task.building === b) this.task = { kind: 'idle' };
+  }
 
   orderMove(x: number, z: number): void { this.task = { kind: 'move', x, z }; }
   orderGather(node: ResourceNode): void {
@@ -88,12 +159,19 @@ export class Villager {
     let nx = this.x + (dx / dist) * step;
     let nz = this.z + (dz / dist) * step;
     if (!walkable(nx, nz)) {
-      // slide along: try x-only then z-only
-      if (walkable(nx, this.z)) { nz = this.z; }
-      else if (walkable(this.x, nz)) { nx = this.x; }
-      else return true; // stuck — give up on this leg
+      // steer around the obstacle: try progressively wider deflections off the
+      // direct heading before declaring the leg stuck
+      const base = Math.atan2(dx, dz);
+      let moved = false;
+      for (const off of [0.6, -0.6, 1.2, -1.2, 1.8, -1.8, 2.5, -2.5]) {
+        const a = base + off;
+        const tnx = this.x + Math.sin(a) * step;
+        const tnz = this.z + Math.cos(a) * step;
+        if (walkable(tnx, tnz)) { nx = tnx; nz = tnz; moved = true; break; }
+      }
+      if (!moved) return true; // genuinely boxed in — give up on this leg
     }
-    this.group.position.set(nx, terrainHeight(nx, nz), nz);
+    this.group.position.set(nx, surfaceHeight(nx, nz), nz);
     this.group.rotation.y = Math.atan2(dx, dz);
     // walk bob
     this.bobPhase += dt * 11;
@@ -117,12 +195,20 @@ export class Villager {
           else { this.task = { kind: 'idle' }; break; }
         }
         if (t.sub === 'go') {
-          if (this.stepToward(t.node.x, t.node.z, dt)) { t.sub = 'work'; this.workTimer = 0; }
+          // stepToward returns true on arrival OR when stuck — only start working
+          // if we actually reached the node, otherwise we'd "gather" from afar
+          if (this.stepToward(t.node.x, t.node.z, dt)) {
+            const near = (this.x - t.node.x) ** 2 + (this.z - t.node.z) ** 2 < 4 * 4;
+            if (near) { t.sub = 'work'; this.workTimer = 0; }
+            else { this.task = { kind: 'idle' }; } // blocked — can't reach this node
+          }
         } else if (t.sub === 'work') {
           this.workTimer += dt;
           // chopping sway
           this.body.rotation.x = Math.sin(this.workTimer * 7) * 0.25;
-          if (this.workTimer >= 0.9) {
+          // a nearby gather camp (lumber/quarry/forager) speeds the work
+          const interval = 0.9 / gatherBonusAt(t.node.x, t.node.z, t.node.kind);
+          if (this.workTimer >= interval) {
             this.workTimer = 0;
             this.carryKind = t.node.kind;
             this.carry += 2;

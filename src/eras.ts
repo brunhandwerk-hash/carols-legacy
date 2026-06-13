@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import { G, pop } from './state';
-import { Building, DEFS } from './buildings';
+import { Building, DEFS, reskinAllBuildings } from './buildings';
 import { PLOTS } from './plots';
 import { showBanner, refreshObjectives, toast } from './ui';
 
@@ -28,13 +28,20 @@ function landmarkDone(key: string): boolean {
   return G.buildings.some((b) => b.plotKey === key && b.phase === 'done');
 }
 
+function hasGatherCamp(): boolean {
+  return G.buildings.some(
+    (b) => b.phase === 'done' && (b.def.key === 'lumbercamp' || b.def.key === 'quarry' || b.def.key === 'forager'),
+  );
+}
+
 export const ERAS: Era[] = [
   {
     yearLabel: 'Anno 1690', enterYear: 1690,
     name: 'The Hermits’ Valley',
     introTitle: 'The Hermits’ Valley',
-    introText: 'Spătar Mihail Cantacuzino has vowed to raise a monastery in this wild valley, named for holy Mount Sinai. Gather timber from the forests and stone from the slopes.',
+    introText: 'Spătar Mihail Cantacuzino has vowed to raise a monastery in this wild valley, named for holy Mount Sinai. Gather timber from the forests and stone from the slopes — a lumber camp or quarry beside the work will speed your hands.',
     objectives: [
+      obj('gathercamp', 'Raise a Lumber Camp or Quarry to work the land faster', () => hasGatherCamp()),
       obj('monastery', 'Build the Sinaia Monastery at its sacred site', () => landmarkDone('monastery')),
       obj('pop8', 'Grow the settlement to 8 souls', () => pop() >= 8),
       obj('food100', 'Stockpile 100 food for the consecration feast', () => G.resources.food >= 100),
@@ -44,9 +51,10 @@ export const ERAS: Era[] = [
     yearLabel: '1695 – 1866', enterYear: 1695,
     name: 'The Monastery Village',
     introTitle: 'The Monastery Is Consecrated',
-    introText: 'On the feast of the Assumption, 1695, the bells ring for the first time. Pilgrims and travelers over the Predeal pass need lodging, and a village takes root beneath the walls.',
+    introText: 'On the feast of the Assumption, 1695, the bells ring for the first time. The monastery’s offerings begin to fill a treasury of coin — wealth that, with the tolls of pilgrims lodging over the Predeal pass, will one day raise a town fit for kings.',
     objectives: [
-      obj('inn', 'Build the Pilgrims’ Inn beside the monastery', () => landmarkDone('oldinn')),
+      obj('treasury', 'Let the monastery’s offerings fill the treasury to 100 coin', () => G.resources.coin >= 100),
+      obj('inn', 'Build the Pilgrims’ Inn beside the monastery (60 coin)', () => landmarkDone('oldinn')),
       obj('pop14', 'Grow the village to 14 souls', () => pop() >= 14),
       obj('wood300', 'Stockpile 300 wood for the village’s growth', () => G.resources.wood >= 300),
     ],
@@ -55,7 +63,7 @@ export const ERAS: Era[] = [
     yearLabel: 'Anno 1866', enterYear: 1866,
     name: 'The King Arrives',
     introTitle: 'A Prince at the Monastery Gate',
-    introText: 'August 1866. Prince Carol of Hohenzollern, newly called to Romania’s throne, lodges at the monastery — and falls in love with the valley. He will build his summer castle here. (This chapter is still being written…)',
+    introText: 'August 1866. Prince Carol of Hohenzollern, newly called to Romania’s throne, lodges at the monastery — and falls in love with the valley. The treasury you have built will fund his summer castle, the grand hotels, and the casino to come. (This chapter is still being written…)',
     objectives: [
       obj('wip', 'To be continued — the Peleș era is under construction', () => false),
     ],
@@ -106,6 +114,7 @@ function advanceEra(): void {
   bannerCooldown = 8;
   const era = ERAS[G.eraIndex];
   G.year = era.enterYear;
+  reskinAllBuildings(); // dwellings age into the new era's style (wood→plaster→brick)
   spawnEraPlots(G.eraIndex);
   showBanner(era.yearLabel, era.introTitle, era.introText);
   refreshObjectives();

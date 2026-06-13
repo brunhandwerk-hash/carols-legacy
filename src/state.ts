@@ -2,10 +2,16 @@ import type * as THREE from 'three';
 import type { Villager } from './units';
 import type { Building } from './buildings';
 
-export type ResKind = 'wood' | 'stone' | 'food';
+export type ResKind = 'wood' | 'stone' | 'food' | 'coin';
+
+// canonical order — drives HUD, affordability checks, cost rendering
+export const RES_KINDS: ResKind[] = ['wood', 'stone', 'food', 'coin'];
+
+// kinds a villager can physically gather from a node (coin is building-generated)
+export type GatherKind = 'wood' | 'stone' | 'food';
 
 export interface ResourceNode {
-  kind: ResKind;
+  kind: GatherKind;
   x: number; z: number;
   amount: number;
   alive: boolean;
@@ -29,7 +35,7 @@ export interface GameState {
 }
 
 export const G: GameState = {
-  resources: { wood: 0, stone: 0, food: 0 },
+  resources: { wood: 0, stone: 0, food: 0, coin: 0 },
   popCap: 0,
   eraIndex: 0,
   year: 1690,
@@ -43,13 +49,11 @@ export const G: GameState = {
 };
 
 export function canAfford(cost: Partial<Record<ResKind, number>>): boolean {
-  return (['wood', 'stone', 'food'] as ResKind[]).every(
-    (k) => G.resources[k] >= (cost[k] ?? 0),
-  );
+  return RES_KINDS.every((k) => G.resources[k] >= (cost[k] ?? 0));
 }
 
 export function pay(cost: Partial<Record<ResKind, number>>): void {
-  for (const k of ['wood', 'stone', 'food'] as ResKind[]) {
+  for (const k of RES_KINDS) {
     G.resources[k] -= cost[k] ?? 0;
   }
 }

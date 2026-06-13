@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Karol's Legacy — Sinaia 1690–1947</title>
+  <title>Carol's Legacy — Sinaia 1690–1947</title>
   <style>
     :root {
       --panel-bg: rgba(34, 28, 22, 0.88);
@@ -35,7 +35,8 @@
     #topbar .dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); }
     #topbar .dot.wood { background: #8a5a2b; }
     #topbar .dot.stone { background: #9a958c; }
-    #topbar .dot.food { background: #d4a843; }
+    #topbar .dot.food { background: #cc5a3a; }
+    #topbar .dot.coin { background: #e7c64b; border-radius: 50%; }
     #topbar .dot.pop { background: #b05f4a; border-radius: 50%; }
     #topbar #era-label { color: var(--accent); font-style: italic; margin-left: 8px; }
 
@@ -62,6 +63,38 @@
     button.act:hover:not(:disabled) { background: #51422d; }
     button.act:disabled { opacity: 0.45; cursor: default; }
 
+    /* uniform icon+text build cards */
+    #selpanel .actions { flex-direction: column; gap: 5px; }
+    button.buildbtn {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
+      border-radius: 5px; padding: 7px 10px; font-family: inherit; cursor: pointer; text-align: left;
+    }
+    button.buildbtn:hover:not(:disabled) { background: #51422d; }
+    button.buildbtn:disabled { opacity: 0.45; cursor: default; }
+    button.buildbtn.danger { border-color: #a6503e; color: #e8b3a4; }
+    button.buildbtn.danger:hover:not(:disabled) { background: #4a2a22; }
+    button.buildbtn.danger .ic { color: #d8775f; }
+    button.buildbtn .ic { flex: 0 0 26px; height: 26px; color: var(--accent); display: flex; align-items: center; justify-content: center; }
+    button.buildbtn .ic svg { width: 26px; height: 26px; }
+    button.buildbtn .lbl { display: flex; flex-direction: column; gap: 2px; line-height: 1.15; }
+    button.buildbtn .nm { font-size: 13.5px; }
+    button.buildbtn .cost { font-size: 11.5px; opacity: 0.9; display: flex; align-items: center; gap: 7px; }
+    button.buildbtn .ci { display: inline-flex; align-items: center; gap: 3px; }
+    button.buildbtn .cdot { width: 9px; height: 9px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.4); display: inline-block; }
+    button.buildbtn .cdot.wood { background: #8a5a2b; }
+    button.buildbtn .cdot.stone { background: #9a958c; }
+    button.buildbtn .cdot.food { background: #cc5a3a; }
+    button.buildbtn .cdot.coin { background: #e7c64b; border-radius: 50%; }
+
+    #idle-btn {
+      top: 10px; left: 12px; cursor: pointer; font-family: inherit; color: var(--ink);
+      font-size: 14px; display: flex; gap: 6px; align-items: center;
+    }
+    #idle-btn:hover:not(:disabled) { background: #51422d; }
+    #idle-btn:disabled { opacity: 0.4; cursor: default; }
+    #idle-btn .dot { width: 10px; height: 10px; border-radius: 50%; background: #9bc47a; display: inline-block; }
+
     #minimap-wrap { right: 12px; bottom: 12px; padding: 6px; }
     #minimap { display: block; cursor: crosshair; border-radius: 3px; }
 
@@ -85,6 +118,12 @@
       display: none; pointer-events: none;
     }
 
+    #nodetip {
+      position: absolute; z-index: 5; pointer-events: none; opacity: 0; transition: opacity 0.12s;
+      background: var(--panel-bg); border: 1px solid var(--panel-edge); border-radius: 4px;
+      padding: 3px 8px; font-size: 12.5px; white-space: nowrap;
+    }
+
     #intro {
       position: fixed; inset: 0; background: rgba(12, 10, 7, 0.92); z-index: 10;
       display: flex; align-items: center; justify-content: center; text-align: center;
@@ -101,10 +140,13 @@
   <div id="app">
     <canvas id="game"></canvas>
     <div id="selbox"></div>
+    <div id="nodetip"></div>
+    <button id="idle-btn" class="panel" title="Select next idle villager (Tab)"><span class="dot"></span>Idle <span id="idle-count">0</span></button>
     <div id="topbar" class="panel">
       <span class="res"><span class="dot wood"></span>Wood <span id="r-wood">0</span></span>
       <span class="res"><span class="dot stone"></span>Stone <span id="r-stone">0</span></span>
       <span class="res"><span class="dot food"></span>Food <span id="r-food">0</span></span>
+      <span class="res"><span class="dot coin"></span>Coin <span id="r-coin">0</span></span>
       <span class="res"><span class="dot pop"></span>Pop <span id="r-pop">0/0</span></span>
       <span id="era-label"></span>
     </div>
@@ -122,7 +164,7 @@
     <div id="toast"></div>
     <div id="intro">
       <div class="inner">
-        <h1>KAROL'S LEGACY</h1>
+        <h1>CAROL'S LEGACY</h1>
         <h2>The Chronicle of Sinaia · 1690 – 1947</h2>
         <p>High in the Prahova Valley, between the cliffs of the Bucegi and the wooded ridge of Baiu,
            a handful of shepherds and woodsmen live in scattered huts beside a cold mountain river.
@@ -131,8 +173,8 @@
         <p>Guide this valley through two and a half centuries: raise the monastery, greet the railway,
            build a king his castle, survive a world war, and write Sinaia's chronicle.</p>
         <div class="controls">
-          Left-click / drag — select villagers &nbsp;·&nbsp; Right-click — move, gather, build<br/>
-          WASD / arrows / edge — pan &nbsp;·&nbsp; Wheel — zoom to cursor &nbsp;·&nbsp; Middle-drag or Ctrl+drag — rotate &amp; tilt &nbsp;·&nbsp; Q / E — rotate
+          Left-click — select &nbsp;·&nbsp; Left-drag — box-select &nbsp;·&nbsp; Right-click — move, gather, build &nbsp;·&nbsp; Right-drag — pan the map<br/>
+          WASD / arrows / screen-edge — pan &nbsp;·&nbsp; Tab — next idle villager &nbsp;·&nbsp; Wheel — zoom to cursor &nbsp;·&nbsp; Middle-drag or Ctrl+drag — rotate &amp; tilt &nbsp;·&nbsp; Q / E — rotate
         </div>
         <button class="act" id="start-btn">Begin · Anno 1690</button>
       </div>

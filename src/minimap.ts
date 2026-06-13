@@ -69,6 +69,12 @@ export function drawMinimap(camTarget: { x: number; z: number }, camYaw: number,
     ctx.arc(toPx(p.x), toPy(p.z), 3.4, 0, Math.PI * 2);
     ctx.stroke();
   }
+  // resource nodes the forest tint can't show: stone outcrops and berry thickets
+  for (const n of G.nodes) {
+    if (!n.alive) continue;
+    if (n.kind === 'stone') { ctx.fillStyle = '#cfcabf'; ctx.fillRect(toPx(n.x) - 1, toPy(n.z) - 1, 2, 2); }
+    else if (n.kind === 'food') { ctx.fillStyle = '#c0506a'; ctx.fillRect(toPx(n.x) - 1, toPy(n.z) - 1, 1.6, 1.6); }
+  }
   // buildings
   for (const b of G.buildings) {
     ctx.fillStyle = b.phase === 'done' ? '#e8d49a' : '#a8854a';

@@ -28,6 +28,7 @@ export const START = {
   wood: 80,
   stone: 0,
   food: 80,
+  coin: 0,
   villagers: 4,
   // hamlet position is set from CAMP_GEO (plots.ts) once the DEM is loaded
   camp: { x: 0, z: 0 },
