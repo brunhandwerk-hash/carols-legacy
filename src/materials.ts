@@ -343,3 +343,79 @@ export function earthMaterial(base = 0x8a6f4d, seed = 67): THREE.MeshStandardMat
   });
   return pbr(tex, 0.97, 2, 0.8);
 }
+
+// ---- splat-blended terrain ground (image-based PBR) ----------------------
+// Real photographic CC0 ground textures (grass/forest-floor/dirt/rock) blended
+// per-vertex by an `aSplat` weight attribute baked in buildTerrainMesh. Injected
+// into MeshStandardMaterial via onBeforeCompile so shadows / HDRI env / fog / ACES
+// all keep working. The existing per-vertex `color` survives as a light tint, so
+// snow/water/road/biome colouring still reads. Rock uses triplanar projection so
+// cliffs don't stretch. Textures are sampled raw (Linear) and linearised in the
+// shader (pow 2.2), since custom texture2D calls bypass three's sRGB auto-decode.
+let groundMat: THREE.MeshStandardMaterial | null = null;
+export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
+  if (groundMat) return groundMat;
+  const loader = new THREE.TextureLoader();
+  const load = (file: string): THREE.Texture => {
+    const t = loader.load('/textures/ground/' + file);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 8;
+    return t; // leave Linear; we linearise manually in the shader
+  };
+  const tGrass = load('grass_color.jpg');
+  const tForest = load('forest_color.jpg');
+  const tDirt = load('dirt_color.jpg');
+  const tRock = load('rock_color.jpg');
+
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xffffff, roughness: 0.96, metalness: 0 });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.tGrass = { value: tGrass };
+    sh.uniforms.tForest = { value: tForest };
+    sh.uniforms.tDirt = { value: tDirt };
+    sh.uniforms.tRock = { value: tRock };
+    sh.uniforms.uTile = { value: 1 / 9 }; // ~9 m per texture repeat
+
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>',
+        '#include <common>\nattribute vec4 aSplat;\nattribute float aRiver;\nvarying vec4 vSplat;\nvarying float vRiver;\nvarying vec3 vWPos;\nvarying vec3 vWNormal;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nvSplat = aSplat;\nvRiver = aRiver;\nvec4 _wp = modelMatrix * vec4(transformed, 1.0);\nvWPos = _wp.xyz;\nvWNormal = normalize(mat3(modelMatrix) * normal);');
+
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\nuniform sampler2D tGrass;\nuniform sampler2D tForest;\nuniform sampler2D tDirt;\nuniform sampler2D tRock;\nuniform float uTile;\nvarying vec4 vSplat;\nvarying float vRiver;\nvarying vec3 vWPos;\nvarying vec3 vWNormal;\n' +
+        // de-tile: blend the texture with a second rotated/rescaled sample so the
+        // ~9 m repeat doesn't read as an obvious grid at close range
+        'vec3 detile(sampler2D t, vec2 uv){ vec3 a = texture2D(t, uv).rgb; vec3 b = texture2D(t, uv * -0.41 + vec2(0.37, 0.61)).rgb; return mix(a, b, 0.4); }')
+      .replace('#include <map_fragment>', `
+        vec2 guv = vWPos.xz * uTile;
+        vec4 w = max(vSplat, 0.0); w /= (w.x + w.y + w.z + w.w + 1e-4);
+        vec3 cG = detile(tGrass, guv);
+        vec3 cF = detile(tForest, guv);
+        vec3 cD = detile(tDirt, guv);
+        vec3 bn = abs(normalize(vWNormal)); bn /= (bn.x + bn.y + bn.z);
+        vec3 cR = texture2D(tRock, vWPos.zy * uTile).rgb * bn.x
+                + texture2D(tRock, vWPos.xz * uTile).rgb * bn.y
+                + texture2D(tRock, vWPos.xy * uTile).rgb * bn.z;
+        vec3 blended = cG * w.x + cF * w.y + cD * w.z + cR * w.w;
+        blended = pow(blended, vec3(2.2)); // sRGB -> linear (manual, see note)
+        blended *= 1.25;                    // lift the (realistic, dark) ground to sit with the bright kit
+        // large-scale variation further breaks the tile repeat
+        float macro = 0.93 + 0.09 * sin(vWPos.x * 0.011 + 1.3) * sin(vWPos.z * 0.0097 - 0.7);
+        blended *= macro;
+        vec3 tint = mix(vec3(1.0), diffuseColor.rgb, 0.35); // diffuseColor.rgb = vColor here
+        diffuseColor.rgb = blended * tint;
+        // ---- the river: paint the ground itself blue along the course (vRiver=1 at
+        // the channel centre, fading to 0 at the banks). Painting the terrain mesh
+        // guarantees the river is always visible — it can never be buried or z-fight
+        // a separate water plane. Kept a flat, uniform blue: a sine "ripple" read as
+        // obvious diagonal stripes (two shades), and a low-roughness sheen reflected
+        // the bright HDRI sky as a blown-out white streak — so the water stays matte
+        // and a single solid colour.
+        vec3 waterCol = vec3(0.02, 0.12, 0.30); // deep, clearly-blue river (linear space)
+        diffuseColor.rgb = mix(diffuseColor.rgb, waterCol, vRiver);
+      `);
+  };
+  groundMat = m;
+  return m;
+}

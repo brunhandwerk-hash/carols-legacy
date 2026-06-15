@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MAP, PALETTE, START } from './config';
-import { terrainHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRiverMesh, buildRoadMesh, buildBackdropMesh, registerFlatSpot, roadDistance, lonLatToWorld, TREELINE } from './terrain';
+import { terrainHeight, surfaceHeight, terrainSlope, riverX, inMap, buildTerrainMesh, buildRoadMesh, buildBackdropMesh, registerFlatSpot, roadDistance, lonLatToWorld, TREELINE } from './terrain';
 import { PLOTS } from './plots';
 import { G, ResourceNode } from './state';
 
@@ -28,10 +28,12 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   for (const p of PLOTS) registerFlatSpot(p.x, p.z, p.r);
   registerFlatSpot(START.camp.x, START.camp.z, 14);
 
-  scene.background = new THREE.Color(PALETTE.sky);
-  // light, long-range haze: enough atmospheric perspective to give the distant
-  // massifs depth, but far enough that the peaks stay visible on the horizon
-  scene.fog = new THREE.Fog(PALETTE.fog, 1400, 40000);
+  // scene.background is owned by main.ts (the sky HDRI dome, with a colour
+  // fallback set before boot) — don't overwrite it here.
+  // atmospheric perspective: clear in the playable foreground, washing the far
+  // massifs (~17 km out) toward the sky-horizon colour so they read as hazy
+  // painted peaks instead of a hard-edged contour model
+  scene.fog = new THREE.Fog(PALETTE.fog, 3000, 24000);
 
   const hemi = new THREE.HemisphereLight(0xcfe4f0, 0x6a7a52, 0.85);
   scene.add(hemi);
@@ -53,7 +55,8 @@ export function buildWorld(scene: THREE.Scene): WorldRefs {
   scene.add(terrain);
   const backdrop = buildBackdropMesh();
   if (backdrop) scene.add(backdrop);
-  scene.add(buildRiverMesh());
+  // the river is painted into the terrain mesh itself (aRiver attribute → blue in the
+  // ground shader), so no separate water plane is added — it can't bury or z-fight.
   scene.add(buildRoadMesh());
 
   const gatherables = scatterNature(scene);
@@ -70,8 +73,9 @@ function paintForestFloor(terrain: THREE.Mesh): void {
   const geo = terrain.geometry as THREE.BufferGeometry;
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const col = geo.attributes.color as THREE.BufferAttribute;
-  const dark = new THREE.Color(0x2c4126);
-  const dark2 = new THREE.Color(0x37502e);
+  const splat = geo.attributes.aSplat as THREE.BufferAttribute | undefined;
+  const dark = new THREE.Color(0x4a6238);
+  const dark2 = new THREE.Color(0x5a7344);
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -84,8 +88,14 @@ function paintForestFloor(terrain: THREE.Mesh): void {
       col.getX(i) * 0.16 + c.r * 0.84,
       col.getY(i) * 0.16 + c.g * 0.84,
       col.getZ(i) * 0.16 + c.b * 0.84);
+    // route the ground splat to the forest-floor texture here (keep any rock)
+    if (splat) {
+      const wRock = splat.getW(i);
+      splat.setXYZW(i, (1 - wRock) * 0.12, (1 - wRock) * 0.88, 0, wRock);
+    }
   }
   col.needsUpdate = true;
+  if (splat) splat.needsUpdate = true;
 }
 
 // ---- forest clearings (poieni) — real ones, by name ----
@@ -104,29 +114,31 @@ const CLEARING_GEOS = [
 
 let clearings: { x: number; z: number; r: number }[] = [];
 
-// Forest geometry is drawn only where there's activity — within REVEAL of a
-// building, a road, or a villager. Everywhere else is just the dark-green forest
-// floor that `paintForestFloor` bakes into the terrain colours, so the wilderness
-// costs nothing to draw. Reveal follows the settlement and its people, NOT the
-// camera, so simply looking around never spawns distant tree meshes.
-interface ForestChunk { cx: number; cz: number; near: THREE.InstancedMesh }
+// The forest is one card-tree InstancedMesh per ~512 m chunk (frustum-culled as a
+// unit). A chunk renders only within a generous radius of the camera's look-at
+// point or settlement activity; beyond that the baked dark forest-floor tint
+// (paintForestFloor) carries the look cheaply, so the wilderness costs nothing.
+interface ForestChunk { cx: number; cz: number; mesh: THREE.InstancedMesh }
 const forestChunks: ForestChunk[] = [];
-const REVEAL = 430; // metres from a chunk centre to any activity to show its trees
+const SHOW_ACT = 600; // show chunks within this of settlement activity
 
-export function updateForestReveal(): void {
+export function updateForestReveal(camX = Infinity, camZ = Infinity, camDist = 600): void {
+  const showCam = Math.min(3200, camDist * 1.5 + 800); // ring scales with zoom; tint carries beyond
+  const camR2 = showCam * showCam, actR2 = SHOW_ACT * SHOW_ACT;
   for (const c of forestChunks) {
-    let show = roadDistance(c.cx, c.cz) < REVEAL;
+    let show = (c.cx - camX) ** 2 + (c.cz - camZ) ** 2 < camR2;
+    if (!show) show = roadDistance(c.cx, c.cz) < SHOW_ACT;
     if (!show) {
       for (const b of G.buildings) {
-        if ((b.x - c.cx) ** 2 + (b.z - c.cz) ** 2 < REVEAL * REVEAL) { show = true; break; }
+        if ((b.x - c.cx) ** 2 + (b.z - c.cz) ** 2 < actR2) { show = true; break; }
       }
     }
     if (!show) {
       for (const v of G.villagers) {
-        if ((v.x - c.cx) ** 2 + (v.z - c.cz) ** 2 < REVEAL * REVEAL) { show = true; break; }
+        if ((v.x - c.cx) ** 2 + (v.z - c.cz) ** 2 < actR2) { show = true; break; }
       }
     }
-    if (c.near.visible !== show) c.near.visible = show;
+    if (c.mesh.visible !== show) c.mesh.visible = show;
   }
 }
 
@@ -141,27 +153,43 @@ function inClearing(x: number, z: number): boolean {
 const RIVER_MEADOW = 45;          // open strip along the Prahova
 const EAST_PASTURE_H = 520;       // Baiu side turns to grass above this
 
-// merged spruce: trunk + two cones, vertex-colored, one draw call per chunk
-function buildTreeGeometry(): THREE.BufferGeometry {
-  const paint = (g: THREE.BufferGeometry, color: number): THREE.BufferGeometry => {
-    const c = new THREE.Color(color);
-    const count = g.attributes.position.count;
-    const colors = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    return g;
-  };
-  const trunk = paint(new THREE.CylinderGeometry(0.45, 0.65, 3.2, 5), PALETTE.trunk);
-  trunk.translate(0, 1.6, 0);
-  const cone1 = paint(new THREE.ConeGeometry(3.1, 6.5, 6), PALETTE.pineDark);
-  cone1.translate(0, 5.2, 0);
-  const cone2 = paint(new THREE.ConeGeometry(2.2, 5, 6), PALETTE.pineMid);
-  cone2.translate(0, 8.6, 0);
-  const merged = mergeGeometries([trunk, cone1, cone2]);
-  trunk.dispose(); cone1.dispose(); cone2.dispose();
-  return merged;
+// A "card tree": two intersecting vertical quads textured with one painted fir
+// (brad). Reads as a 3D tree from the RTS camera at ~8 tris. Origin at the trunk
+// base. The artwork sits centred in the texture with wide margins, so the card is
+// slimmed to the fir's true aspect and its UVs cropped to the fir's bounding box
+// (measured off the 1408×768 texture: x 515..897, y 36 apex .. 684 trunk base).
+function buildCardTreeGeometry(): THREE.BufferGeometry {
+  const w = 7.7, h = 13;
+  const p1 = new THREE.PlaneGeometry(w, h); p1.translate(0, h / 2, 0);
+  const p2 = new THREE.PlaneGeometry(w, h); p2.translate(0, h / 2, 0); p2.rotateY(Math.PI / 2);
+  const g = mergeGeometries([p1, p2]);
+  p1.dispose(); p2.dispose();
+  const u0 = 515 / 1408, u1 = 897 / 1408;        // tree spans x 515..897
+  const v0 = 1 - 684 / 768, v1 = 1 - 36 / 768;   // trunk base..apex (texture flipY)
+  const uv = g.attributes.uv as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, u0 + uv.getX(i) * (u1 - u0), v0 + uv.getY(i) * (v1 - v0));
+  }
+  uv.needsUpdate = true;
+  return g;
+}
+
+// Card-tree material: the painted fir PNG, alpha-tested (opaque pass, no sorting,
+// works with GTAO). The source ships with an opaque grey backdrop, so brad_cut.png
+// is a copy with that backdrop keyed out to real alpha. The texture is sRGB so the
+// GPU decodes it to linear on sample. Lit by the HDRI env + sun, with a touch of
+// self-illumination so the trees lift out of shadow and sit with the lit ground.
+let cardTreeMat: THREE.MeshStandardMaterial | null = null;
+function cardTreeMaterial(): THREE.MeshStandardMaterial {
+  if (cardTreeMat) return cardTreeMat;
+  const tex = new THREE.TextureLoader().load('/textures/foliage/brad_cut.png');
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  cardTreeMat = new THREE.MeshStandardMaterial({
+    map: tex, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9, metalness: 0,
+    emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.12,
+  });
+  return cardTreeMat;
 }
 
 // deterministic forest predicate — used for the minimap tint
@@ -173,6 +201,14 @@ export function forestedAt(x: number, z: number): boolean {
   if (Math.abs(x - riverX(z)) < RIVER_MEADOW) return false;
   if (x > riverX(z) + 150 && h > EAST_PASTURE_H) return false; // Baiu pasture
   return true;
+}
+
+// Low-frequency clump field used to VARY forest density (denser/sparser patches),
+// so the wood reads naturally instead of as a uniform carpet — without leaving
+// large bare areas (only the explicit clearings are true meadows).
+function forestClump(x: number, z: number): number {
+  return 0.5 + 0.32 * Math.sin(x * 0.0023 + 1.7) * Math.cos(z * 0.0019 - 0.5)
+       + 0.24 * Math.sin((x + z) * 0.0015 + 3.1) * Math.sin((x - z) * 0.0017);
 }
 
 // ---- trees, rocks, berry bushes: instanced meshes + resource nodes ----
@@ -198,18 +234,16 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
     return true;
   };
 
-  // --- the forest: real density (~9m spacing), covering everything below the
-  // treeline including the future town site (anno 1690 — no town yet).
-  // One merged tree geometry, one InstancedMesh per ~1km terrain chunk, so the
-  // GPU frustum-culls whole chunks. Trees below HARVEST_MAX_H are resource
-  // nodes; higher forest is scenery. Picking goes through terrain-hit +
-  // nearest-node lookup, never the instances. ---
-  const treeGeo = buildTreeGeometry();
-  const treeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  // --- the forest: clustered card-trees. Instead of a uniform 9 m carpet, a
+  // low-frequency clump field carves the wood into thickets with open meadows
+  // between (natural, less "raster"). One InstancedMesh of card-trees per ~512 m
+  // chunk so the GPU frustum-culls whole chunks; each instance picks one of the
+  // 7 conifer photos. Trees below HARVEST_MAX_H are harvestable wood nodes. ---
+  const cardGeo = buildCardTreeGeometry();
+  const cardMat = cardTreeMaterial();
   const HARVEST_MAX_H = 420;
-  const SPACING = 9;
-  const CHUNK = 512; // smaller chunks so the activity-based reveal reads as a radius
-  const FILL = 0.8;
+  const SPACING = 14;   // base canopy spacing (density then varies by clump)
+  const CHUNK = 512;
   let totalTrees = 0;
 
   const chunksX = Math.ceil(MAP.width / CHUNK);
@@ -222,12 +256,18 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
       const spots: { x: number; z: number; h: number }[] = [];
       for (let gz = z0; gz < Math.min(z0 + CHUNK, MAP.maxZ - 14); gz += SPACING) {
         for (let gx = x0; gx < Math.min(x0 + CHUNK, MAP.maxX - 14); gx += SPACING) {
-          const keep = crng() <= FILL;
-          const jx = (crng() - 0.5) * SPACING * 0.9;
-          const jz = (crng() - 0.5) * SPACING * 0.9;
-          if (!keep) continue;
+          const jx = (crng() - 0.5) * SPACING * 0.95;
+          const jz = (crng() - 0.5) * SPACING * 0.95;
           const x = gx + jx, z = gz + jz;
           if (!inMap(x, z)) continue;
+          // density VARIES with the clump field but never drops to bare — the
+          // valley stays densely wooded (matching the forested backdrop); only the
+          // explicit clearings/river/pasture (via forestedAt below) are true meadows
+          const nearCamp = (x - START.camp.x) ** 2 + (z - START.camp.z) ** 2 < 520 * 520;
+          if (!nearCamp) {
+            const density = Math.max(0.45, Math.min(1, 0.7 + 1.0 * (forestClump(x, z) - 0.5)));
+            if (crng() > density) continue;
+          }
           const h = terrainHeight(x, z);
           if (h > TREELINE) continue;
           if (terrainSlope(x, z) > 1.35) continue;
@@ -238,16 +278,16 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
         }
       }
       if (spots.length === 0) continue;
-      // near mesh: every tree, full detail. Trees don't cast shadows — they're
-      // background filler and dropping them from the shadow pass frees the GPU
-      // budget for the detailed PBR buildings.
-      const mesh = new THREE.InstancedMesh(treeGeo, treeMat, spots.length);
-      mesh.castShadow = false;
+      // all chunks share the one card geometry (every tree is the same pine now)
+      const mesh = new THREE.InstancedMesh(cardGeo, cardMat, spots.length);
+      mesh.castShadow = false; // cards don't self-shadow well; keep the budget
       mesh.raycast = () => {};
-      mesh.visible = false; // updateForestReveal shows it only near activity
+      mesh.visible = false; // updateForestReveal shows it within the camera ring
       spots.forEach((s, i) => {
-        dummy.position.set(s.x, s.h, s.z);
-        dummy.scale.setScalar(0.85 + crng() * 0.8);
+        // plant on the *rendered* surface (like buildings/villagers) so trees
+        // don't sink into or float above the coarse mesh between DEM samples
+        dummy.position.set(s.x, surfaceHeight(s.x, s.z), s.z);
+        dummy.scale.setScalar(0.8 + crng() * 0.85);
         dummy.rotation.set(0, crng() * Math.PI * 2, 0);
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
@@ -255,12 +295,13 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
           G.nodes.push({ kind: 'wood', x: s.x, z: s.z, amount: 120, alive: true, mesh: [mesh], index: i });
         }
       });
+      mesh.computeBoundingSphere(); // spread instances → cull on the real footprint
       scene.add(mesh);
-      forestChunks.push({ cx: x0 + CHUNK / 2, cz: z0 + CHUNK / 2, near: mesh });
+      forestChunks.push({ cx: x0 + CHUNK / 2, cz: z0 + CHUNK / 2, mesh });
       totalTrees += spots.length;
     }
   }
-  console.log(`forest: ${totalTrees} trees, ${G.nodes.length} harvestable, ${forestChunks.length} chunks`);
+  console.log(`forest: ${totalTrees} card-trees, ${G.nodes.length} harvestable, ${forestChunks.length} chunks`);
 
   // --- stone outcrops (real-world locations on the lower slopes) ---
   const rockGeo = new THREE.DodecahedronGeometry(2.4, 0);
@@ -284,10 +325,22 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
       rockSpots.push({ x, z });
     }
   }
+  // a guaranteed stone outcrop right beside the start camp, offset toward the
+  // camp's own bank (away from the river) so it's always reachable without a
+  // bridge — the lat/lon outcrops above are too far for the early game.
+  const campSide = Math.sign(START.camp.x - riverX(START.camp.z)) || 1;
+  const nearCamp = { x: START.camp.x + campSide * 50, z: START.camp.z - 22, r: 26, count: 24 };
+  for (let i = 0; i < nearCamp.count; i++) {
+    const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * nearCamp.r;
+    const x = nearCamp.x + Math.cos(a) * d, z = nearCamp.z + Math.sin(a) * d;
+    if (!inMap(x, z) || !clearOf(x, z, 2)) continue;
+    if (terrainSlope(x, z) > 1.45) continue;
+    rockSpots.push({ x, z });
+  }
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockSpots.length);
   rocks.castShadow = true;
   rockSpots.forEach((s, i) => {
-    dummy.position.set(s.x, terrainHeight(s.x, s.z) + 0.6, s.z);
+    dummy.position.set(s.x, surfaceHeight(s.x, s.z) + 0.6, s.z);
     dummy.scale.set(0.8 + rng(), 0.6 + rng() * 0.7, 0.8 + rng());
     dummy.rotation.set(rng(), rng() * Math.PI, rng() * 0.5);
     dummy.updateMatrix();
@@ -324,7 +377,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const bushes = new THREE.InstancedMesh(bushGeo, bushMat, bushSpots.length);
   bushes.castShadow = true;
   bushSpots.forEach((s, i) => {
-    dummy.position.set(s.x, terrainHeight(s.x, s.z) + 0.7, s.z);
+    dummy.position.set(s.x, surfaceHeight(s.x, s.z) + 0.7, s.z);
     dummy.scale.set(1 + rng() * 0.6, 0.7 + rng() * 0.4, 1 + rng() * 0.6);
     dummy.rotation.set(0, rng() * Math.PI, 0);
     dummy.updateMatrix();
@@ -345,6 +398,35 @@ export function hideNode(node: ResourceNode): void {
     m.setMatrixAt(node.index, zero);
     m.instanceMatrix.needsUpdate = true;
   }
+}
+
+// vertical offset baked into each kind's instance matrix at scatter time, so a
+// re-seated node keeps sitting the same way it was first planted
+const NODE_Y_OFFSET: Record<ResourceNode['kind'], number> = { wood: 0, stone: 0.6, food: 0.7 };
+
+// After the terrain is reshaped under a building (flattenUnder), trees/rocks/
+// berries near the footprint keep the height baked in at scatter time and would
+// hang in the air or sink. Re-seat every node within reach onto the new surface,
+// preserving its baked scale/rotation (only the Y translation changes).
+const _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3();
+export function reseatNodesNear(x: number, z: number, r: number): void {
+  const r2 = r * r;
+  const touched = new Set<THREE.InstancedMesh>();
+  for (const n of G.nodes) {
+    if (!n.alive) continue;
+    const dx = n.x - x, dz = n.z - z;
+    if (dx * dx + dz * dz > r2) continue;
+    const y = surfaceHeight(n.x, n.z) + NODE_Y_OFFSET[n.kind];
+    for (const m of n.mesh) {
+      m.getMatrixAt(n.index, _m);
+      _m.decompose(_p, _q, _s);
+      _p.y = y;
+      _m.compose(_p, _q, _s);
+      m.setMatrixAt(n.index, _m);
+      touched.add(m);
+    }
+  }
+  for (const m of touched) m.instanceMatrix.needsUpdate = true;
 }
 
 // nearest living node of any kind to a ground point — forgiving right-click /

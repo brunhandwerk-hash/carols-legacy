@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MAP, PALETTE } from './config';
-import { cobbleMaterial, waterMaterial } from './materials';
+import { cobbleMaterial, waterMaterial, terrainGroundMaterial } from './materials';
+import { G } from './state';
 
 // ---- real-world digital elevation model (public/dem.bin, see scripts/fetch-dem.mjs) ----
 // World coords: x east (m), z south (m), origin at the bbox centre. Heights in
@@ -105,14 +106,90 @@ export function inRiver(x: number, z: number): boolean {
   return Math.abs(x - riverX(z)) < 16;
 }
 
+// ---- the river channel, carved into the terrain itself ----
+// The Prahova used to be a flat blue ribbon laid *on* the ground at +0.4 m. The
+// coarse rendered mesh (~16 m spacing) never dips for a 22 m river, so the banks
+// sat 1–2 m *above* the water and occluded it from every angle — the river kept
+// "disappearing". Instead we carve an actual trench into terrainHeight (the single
+// source of truth): the mesh dips, the water fills the trench, and the banks frame
+// it. The bed is flattened to a *level* cross-section (following the centreline
+// downstream) out to RIVER_FLAT, then ramps back to undisturbed ground at RIVER_BANK.
+// The rendered terrain mesh is coarse (~16 m vertex spacing), so the channel must be
+// wide enough that several vertices always fall inside it — otherwise the mesh only
+// dips where a vertex happens to land and the water gets buried in between. Flattening
+// to a level bed (not just subtracting a constant depth) is essential: a constant
+// subtraction preserves the cross-valley slope, so a steep bank still pokes above the
+// water; a level bed guarantees the water plane clears the ground beneath it.
+const RIVER_FLAT = 14;   // half-width of the flat channel bed (≥ mesh spacing)
+const RIVER_BANK = 30;   // half-width where the bank ramps back to undisturbed ground
+const RIVER_DEPTH = 3.0; // how far below the centreline ground the bed sits
+
+// The flat bed level at a given downstream position. Cross-sectionally constant —
+// that is what makes the bed level instead of a shifted-down hillside.
+function riverBed(z: number): number {
+  return rawHeight(riverX(z), z) - RIVER_DEPTH;
+}
+
+// True perpendicular distance from (x,z) to the river centreline polyline. Using
+// |x − riverX(z)| (horizontal offset at fixed z) under-measures the distance where
+// the river bends, so the outer bank gets under-carved and the water buries there.
+function riverDist(x: number, z: number): number {
+  if (riverPts.length === 0) return Infinity;
+  const f = (z - MAP.minZ) / riverStep;
+  const c = Math.round(f);
+  let best = Infinity;
+  for (let r = Math.max(0, c - 3); r < Math.min(riverPts.length - 1, c + 3); r++) {
+    const z0 = MAP.minZ + r * riverStep, z1 = z0 + riverStep;
+    const x0 = riverPts[r], x1 = riverPts[r + 1];
+    const dx = x1 - x0, dz = z1 - z0;
+    const t = Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / (dx * dx + dz * dz)));
+    const d = Math.hypot(x - (x0 + t * dx), z - (z0 + t * dz));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// Blend weight (0..1) of the level bed at this point: 1 across the flat bed,
+// ramping to 0 at the bank rim.
+function riverBlend(x: number, z: number): number {
+  if (riverPts.length === 0) return 0; // river not traced yet
+  const d = riverDist(x, z);
+  if (d >= RIVER_BANK) return 0;
+  if (d <= RIVER_FLAT) return 1;
+  return 1 - smoothstep(RIVER_FLAT, RIVER_BANK, d);
+}
+
 // ---- plot flattening (building sites stamped level into the real terrain) ----
 export interface FlatSpot { x: number; z: number; r: number }
 const flatSpots: FlatSpot[] = [];
 const flatHeights: number[] = [];
+let terrainMesh: THREE.Mesh | null = null; // set by buildTerrainMesh, deformed by flattenUnder
 
 export function registerFlatSpot(x: number, z: number, r: number): void {
   flatSpots.push({ x, z, r });
   flatHeights.push(rawHeight(x, z));
+}
+
+// Level the *rendered* terrain under a building at runtime — instead of dropping a
+// stone cylinder/terrace on top of it. Registers a flat spot (so terrainHeight /
+// surfaceHeight stay the single source of truth) then re-seats every nearby mesh
+// vertex to the new, flattened height with a smooth falloff into the slope.
+export function flattenUnder(x: number, z: number, r: number): void {
+  registerFlatSpot(x, z, r);
+  if (!terrainMesh) return;
+  const geo = terrainMesh.geometry as THREE.BufferGeometry;
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const reach = r * 1.9 + 1; // registerFlatSpot blends out to 1.9·r
+  const reach2 = reach * reach;
+  for (let i = 0; i < pos.count; i++) {
+    const vx = pos.getX(i), vz = pos.getZ(i);
+    const dx = vx - x, dz = vz - z;
+    if (dx * dx + dz * dz > reach2) continue;
+    pos.setY(i, terrainHeight(vx, vz)); // terrainHeight now includes the new flat spot
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
 }
 
 function smoothstep(a: number, b: number, t: number): number {
@@ -122,12 +199,19 @@ function smoothstep(a: number, b: number, t: number): number {
 
 export function terrainHeight(x: number, z: number): number {
   let h = rawHeight(x, z);
+  let flat = 0; // strongest flat-spot blend at this point
   for (let i = 0; i < flatSpots.length; i++) {
     const s = flatSpots[i];
     const dx = x - s.x, dz = z - s.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
     const blend = 1 - smoothstep(s.r, s.r * 1.9, dist);
-    if (blend > 0) h = h * (1 - blend) + flatHeights[i] * blend;
+    if (blend > 0) { h = h * (1 - blend) + flatHeights[i] * blend; if (blend > flat) flat = blend; }
+  }
+  // carve the river trench by flattening toward a level bed, but yield to any
+  // building terrace stamped over this spot
+  if (flat < 1) {
+    const w = riverBlend(x, z) * (1 - flat);
+    if (w > 0) h = h * (1 - w) + riverBed(z) * w;
   }
   return h;
 }
@@ -137,6 +221,11 @@ export function terrainHeight(x: number, z: number): number {
 // so it does NOT match the full-res terrainHeight between those vertices. Things
 // that must sit *on the visible ground* (villagers) use this, which reproduces
 // the mesh's own interpolation — otherwise they sink into concave ground.
+// Rendered terrain grid (≈16 m spacing). Kept coarse for performance: things
+// that must sit *on* the visible ground (trees, buildings, villagers) sample
+// surfaceHeight() — which reconstructs THIS mesh's exact triangle — so they sit
+// flush regardless of how coarse the mesh is. (A finer mesh was tried at
+// 760×880 but cost too much for too little gain once placement used surfaceHeight.)
 export const TERR_SEG_X = 380;
 export const TERR_SEG_Z = 440;
 
@@ -172,8 +261,38 @@ export function inMap(x: number, z: number): boolean {
   return x > MAP.minX + 12 && x < MAP.maxX - 12 && z > MAP.minZ + 12 && z < MAP.maxZ - 12;
 }
 
+// A flattened building terrace (its level disc + the ramp that blends it back
+// into the hillside) is deliberately traversable — it's the plot villagers must
+// reach to build/work there. Carving a shelf into a slope, though, leaves a
+// steep downhill rim whose slope exceeds the walkable limit, which would seal
+// the building off and strand anyone heading to it. So count flat-spot ground
+// as walkable regardless of that artificial rim slope.
+function inFlatSpot(x: number, z: number): boolean {
+  for (let i = 0; i < flatSpots.length; i++) {
+    const s = flatSpots[i];
+    const dx = x - s.x, dz = z - s.z;
+    if (dx * dx + dz * dz < (s.r * 1.9) ** 2) return true;
+  }
+  return false;
+}
+
+// the river channel is impassable except over a bridge: a bridge (whether still
+// a construction site or finished) opens a crossing corridor wide enough to span
+// both banks, so builders can reach the in-river site and travellers can cross.
+const BRIDGE_CROSS_R = 20; // ≥ river half-width (16) so the corridor reaches both banks
+function nearBridgeCrossing(x: number, z: number): boolean {
+  for (const b of G.buildings) {
+    if (b.def.key !== 'bridge' && b.def.key !== 'bridge_stone') continue;
+    if (b.phase === 'planned') continue;
+    if ((b.x - x) ** 2 + (b.z - z) ** 2 < BRIDGE_CROSS_R ** 2) return true;
+  }
+  return false;
+}
+
 export function walkable(x: number, z: number): boolean {
-  return inMap(x, z) && terrainSlope(x, z) < 0.85;
+  if (!inMap(x, z)) return false;
+  if (inRiver(x, z) && !nearBridgeCrossing(x, z)) return false;
+  return terrainSlope(x, z) < 0.85 || inFlatSpot(x, z);
 }
 
 // ---- historical roads, painted into the terrain colors ----
@@ -205,6 +324,8 @@ export function buildTerrainMesh(): THREE.Mesh {
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
+  const splat = new Float32Array(pos.count * 4); // [grass, forest, dirt, rock] blend weights
+  const river = new Float32Array(pos.count);     // 0..1 water weight (shader paints the ground blue)
   const c = new THREE.Color();
   const grassLow = new THREE.Color(PALETTE.grassLow);
   const grassHigh = new THREE.Color(PALETTE.grassHigh);
@@ -214,8 +335,7 @@ export function buildTerrainMesh(): THREE.Mesh {
   const rockHigh = new THREE.Color(PALETTE.rockHigh);
   const snowC = new THREE.Color(PALETTE.snow);
   const dirt = new THREE.Color(PALETTE.dirt);
-  const waterC = new THREE.Color(0x3a6f8c); // river-bed tint, so the course reads on the ground itself
-  const bankC = new THREE.Color(0x4c5a34);  // damp, darker-green riverbank (not a tan path)
+  const bankC = new THREE.Color(0x4c5a34);  // damp, darker-green riverbank under the painted-blue channel
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -229,21 +349,32 @@ export function buildTerrainMesh(): THREE.Mesh {
     // rock on steep ground, more above the treeline
     if (slope > 0.55) c.lerp(slope > 1.0 ? rockHigh : rockC, Math.min(1, (slope - 0.55) / 0.45));
     if (h > SNOWLINE) c.lerp(snowC, Math.min(1, (h - SNOWLINE) / 90));
-    // the Prahova: a clear blue river-bed band, fading to muddy banks, painted
-    // into the ground so the course is obvious even where the water plane is subtle
-    const rd = Math.abs(x - riverX(z));
-    if (rd < 12) c.lerp(waterC, (1 - rd / 12) * 0.6);        // wet bed under the water ribbon
-    else if (rd < 24) c.lerp(bankC, (1 - (rd - 12) / 12) * 0.45); // damp grassy banks (no tan path)
+    // the Prahova: painted straight into the ground (the shader turns this band
+    // blue). Using true perpendicular distance so the course stays clean on bends.
+    const rd = riverDist(x, z);
+    if (rd < RIVER_BANK) c.lerp(bankC, (1 - rd / RIVER_BANK) * 0.4); // damp grassy banks under the blue
+    // water weight: solid across the channel bed, quick fade into the banks
+    river[i] = rd <= RIVER_FLAT ? 1 : 1 - smoothstep(RIVER_FLAT, RIVER_FLAT + 8, rd);
     const road = roadDistance(x, z);
     if (road < 5) c.lerp(dirt, (1 - road / 5) * 0.85);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    // ground-texture splat weights (forest channel is filled by paintForestFloor)
+    const wRock = slope > 0.55 ? Math.min(1, (slope - 0.55) / 0.45) : 0;
+    const wDirt = road < 5 ? (1 - road / 5) * 0.9 : 0;
+    const wGrass = Math.max(0, 1 - wRock - wDirt);
+    splat[i * 4] = wGrass; splat[i * 4 + 1] = 0; splat[i * 4 + 2] = wDirt; splat[i * 4 + 3] = wRock;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 4));
+  geo.setAttribute('aRiver', new THREE.BufferAttribute(river, 1));
   geo.computeVertexNormals();
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  // image-based PBR ground: real grass/forest/dirt/rock textures splat-blended by
+  // the aSplat weights, with the vertex colours surviving as a light tint.
+  const mat = terrainGroundMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.name = 'terrain';
+  terrainMesh = mesh;
   return mesh;
 }
 
@@ -297,9 +428,17 @@ export function buildRoadMesh(): THREE.Mesh {
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
-  if (!roadMat) roadMat = cobbleMaterial();
+  if (!roadMat) {
+    roadMat = cobbleMaterial();
+    // pull the ribbon toward the camera in depth so it never z-fights the
+    // (now much finer) terrain mesh it's draped on
+    roadMat.polygonOffset = true;
+    roadMat.polygonOffsetFactor = -2;
+    roadMat.polygonOffsetUnits = -2;
+  }
   const mesh = new THREE.Mesh(geo, roadMat);
   mesh.receiveShadow = true;
+  mesh.renderOrder = 1; // after terrain (0), before river (2)
   mesh.name = 'road';
   return mesh;
 }
@@ -341,17 +480,35 @@ export function buildBackdropMesh(): THREE.Mesh | null {
 
   const pos = new Float32Array(N * 3);
   const col = new Float32Array(N * 3);
+  const splat = new Float32Array(N * 4); // [grass, forest, dirt, rock] for the shared ground material
   const c = new THREE.Color();
   const forestLo = new THREE.Color(0x35492c), forestHi = new THREE.Color(0x4a6738);
   const alpine = new THREE.Color(0x8f9a6a);
   const rock = new THREE.Color(0x8a8479), rockHi = new THREE.Color(0xa39c8f), snow = new THREE.Color(0xeef2f5);
+  // haze tint: softens the hard elevation bands toward the sky colour so the
+  // massifs read as atmospheric painted peaks, not a high-contrast contour model
+  const haze = new THREE.Color(PALETTE.fog);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       const k = j * w + i;
       // tuck vertices that fall inside the playable footprint far down so the
       // detailed terrain hides them; keep true elevation everywhere outside
       const inside = interior(wx[k], wz[k]);
-      const y = (asl[k] - baseElev) - (inside ? 60 : 0);
+      let yNat = asl[k] - baseElev;
+      // close the seam where the backdrop meets the detailed mesh: blend the
+      // near-edge backdrop height toward the detailed terrain's edge height over
+      // a few cells, so the two surfaces line up instead of stepping.
+      if (!inside) {
+        const cxw = Math.min(MAP.maxX, Math.max(MAP.minX, wx[k]));
+        const czw = Math.min(MAP.maxZ, Math.max(MAP.minZ, wz[k]));
+        const dOut = Math.hypot(wx[k] - cxw, wz[k] - czw);
+        const band = cell * 3;
+        if (dOut < band) {
+          const t = dOut / band;
+          yNat = terrainHeight(cxw, czw) * (1 - t) + yNat * t;
+        }
+      }
+      const y = yNat - (inside ? 60 : 0);
       pos[k * 3] = wx[k]; pos[k * 3 + 1] = y; pos[k * 3 + 2] = wz[k];
       // slope from grid neighbours
       const il = k - (i > 0 ? 1 : 0), ir = k + (i < w - 1 ? 1 : 0);
@@ -364,7 +521,15 @@ export function buildBackdropMesh(): THREE.Mesh | null {
       else c.copy(alpine).lerp(rockHi, Math.min(1, (a - 1700) / 350));
       if (dh > 0.5) c.lerp(a > 1500 ? rockHi : rock, Math.min(1, (dh - 0.5) / 0.7));
       if (a > 1850) c.lerp(snow, Math.min(1, (a - 1850) / 280));
+      c.lerp(haze, 0.18); // desaturate toward the sky so distance haze blends cleanly
       col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+      // ground-texture splat weights so the massifs read as textured terrain
+      // (grass low, forest mid-band, rock on steep/high ground) — not flat colour
+      let wR = dh > 0.5 ? Math.min(1, (dh - 0.5) / 0.7) : 0;
+      if (a > 1650) wR = Math.max(wR, Math.min(1, (a - 1650) / 350));
+      const wF = Math.max(0, Math.min(1, (a - 820) / 220)) * Math.max(0, Math.min(1, (1750 - a) / 250));
+      const wG = Math.max(0.05, 1 - wF - wR);
+      splat[k * 4] = wG; splat[k * 4 + 1] = wF; splat[k * 4 + 2] = 0; splat[k * 4 + 3] = wR;
     }
   }
 
@@ -383,9 +548,13 @@ export function buildBackdropMesh(): THREE.Mesh | null {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 4));
   geo.setIndex(idx);
   geo.computeVertexNormals();
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  // same splat-blended image-based ground material as the playable terrain, so the
+  // surrounding massifs are textured grass/forest/rock (hazed by distance fog)
+  // instead of flat washed-out colour.
+  const mat = terrainGroundMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'backdrop';
   mesh.raycast = () => {}; // inert for picking
@@ -395,8 +564,8 @@ export function buildBackdropMesh(): THREE.Mesh | null {
 
 export function buildRiverMesh(): THREE.Mesh {
   const steps = 380;
-  const halfW = 11;  // a clean, consistent ~22 m channel
-  const lift = 0.4;
+  const halfW = RIVER_FLAT; // span the full flat channel bed
+  const lift = 2.0;         // sit clearly above the rendered bed (still ~1 m below the rim) so it never buries
   const verts: number[] = [];
   const uvs: number[] = [];
   const idx: number[] = [];
@@ -405,13 +574,14 @@ export function buildRiverMesh(): THREE.Mesh {
   for (let i = 0; i <= steps; i++) {
     const z = MAP.minZ + (i / steps) * MAP.depth;
     const x = riverX(z);
-    // A consistent-width ribbon draped on the *rendered* surface (surfaceHeight,
-    // not the buried rawHeight) — like a blue road. Each edge hugs the terrain,
-    // so the band is even and clean instead of a ragged flat sheet clipped by the
-    // coarse mesh.
+    // A flat water surface, draped at the *rendered* channel-bed height (surfaceHeight,
+    // which reproduces the coarse mesh's actual dip) plus a lift — so the water is
+    // guaranteed to sit above the ground beneath it regardless of how the mesh
+    // happened to triangulate the carve. The carved banks rise past ±RIVER_FLAT and
+    // frame the ribbon instead of occluding it.
+    const level = surfaceHeight(x, z) + lift;
     const lx = x - halfW, rx = x + halfW;
-    const ly = surfaceHeight(lx, z) + lift;
-    const ry = surfaceHeight(rx, z) + lift;
+    const ly = level, ry = level;
     if (i > 0) cum += Math.hypot(x - px, z - pz);
     px = x; pz = z;
     verts.push(lx, ly, z, rx, ry, z);
@@ -427,9 +597,14 @@ export function buildRiverMesh(): THREE.Mesh {
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
-  if (!waterMat) waterMat = waterMaterial();
+  if (!waterMat) {
+    waterMat = waterMaterial();
+    waterMat.polygonOffset = true;
+    waterMat.polygonOffsetFactor = -3; // pull in front of road + terrain
+    waterMat.polygonOffsetUnits = -3;
+  }
   const mesh = new THREE.Mesh(geo, waterMat);
-  mesh.renderOrder = 1; // draw the translucent water after the terrain
+  mesh.renderOrder = 2; // draw the translucent water after terrain (0) and road (1)
   mesh.name = 'river';
   return mesh;
 }
