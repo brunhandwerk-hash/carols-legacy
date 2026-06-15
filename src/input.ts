@@ -76,6 +76,10 @@ export function initInput(
   }
 
   // ---- ghost building placement ----
+  // riparian buffer (metres from the river centreline, plus the footprint radius):
+  // the fishery must sit inside it (at the bank), every other building must stay
+  // beyond it — a no-build strip keeping the waterside clear. Bridges are exempt.
+  const WATER_BUFFER = 30;
   let ghost: { key: string; mesh: THREE.Group; ring: THREE.Mesh; valid: boolean } | null = null;
   const okMat = new THREE.MeshBasicMaterial({ color: 0x7fc456, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
   const badMat = new THREE.MeshBasicMaterial({ color: 0xc45656, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
@@ -124,9 +128,18 @@ export function initInput(
     const def = DEFS[ghost.key];
     // buildings terrace their own ground (see Building.addFoundation), so they can
     // sit on fairly steep slopes — only true cliffs and the river are off-limits.
-    // Keep the whole footprint out of the river channel; bridges may cross it.
     const riverDist = Math.abs(p.x - riverX(p.z));
-    const riverOk = def.noFoundation || riverDist > 13 + def.radius;
+    const inChannel = riverDist <= 13 + def.radius; // footprint touches the water
+    // River rules, by building type:
+    //  • bridges (noFoundation) may cross the channel;
+    //  • the fishery (needsWater) must sit at the bank — out of the channel but
+    //    inside the WATER_BUFFER band;
+    //  • everything else must keep clear of the water: a no-build riparian buffer.
+    const riverOk = def.noFoundation
+      ? true
+      : def.needsWater
+        ? (!inChannel && riverDist < def.radius + WATER_BUFFER)
+        : riverDist > def.radius + WATER_BUFFER;
     // the far bank is off-limits until a bridge spans the river. Bridges (noFoundation)
     // are exempt so the first crossing can always be placed.
     const startSign = Math.sign(START.camp.x - riverX(START.camp.z));
@@ -149,9 +162,14 @@ export function initInput(
       if (ghost) {
         const p = groundPoint(pointerX, pointerY);
         const def = DEFS[ghost.key];
+        const riverDist = p ? Math.abs(p.x - riverX(p.z)) : Infinity;
         const farBank = p && !def.noFoundation && !bridgeBuilt() &&
           Math.sign(p.x - riverX(p.z)) !== Math.sign(START.camp.x - riverX(START.camp.z));
-        toast(farBank ? 'Bridge the Prahova to build on the far bank.' : 'Cannot build here.');
+        const needsWater = def.needsWater && riverDist >= def.radius + WATER_BUFFER;
+        const tooCloseToWater = !def.noFoundation && !def.needsWater && riverDist <= def.radius + WATER_BUFFER;
+        toast(needsWater ? `The ${def.name} must be built at the water’s edge.`
+          : tooCloseToWater ? 'Too close to the water — keep the riverbank clear.'
+          : farBank ? 'Bridge the Prahova to build on the far bank.' : 'Cannot build here.');
       }
       return;
     }

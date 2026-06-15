@@ -30,7 +30,6 @@ export function autoAssign(): void {
   const avail = G.villagers.filter(
     (v) => v.alive && !v.sheltered && (v.isIdle || (v.task.kind === 'gather' && v.autoGather)),
   );
-  if (avail.length === 0) return;
   let gatherIdx = 0; // alternates idle gatherers between wood and food
   for (const v of avail) {
     // PRIORITY 1: construction sites short of builders (recomputed per villager,
@@ -66,5 +65,23 @@ export function autoAssign(): void {
     let node = nearestNode(kind, v.x, v.z);
     if (!node) node = nearestNode(kind === 'wood' ? 'food' : 'wood', v.x, v.z); // none of that kind left
     if (node) { v.orderGather(node); v.autoGather = true; gatherIdx++; }
+  }
+
+  // GUARANTEE: every commissioned construction site gets at least one builder.
+  // The loop above only moves idle/auto-gathering hands, so a fully-staffed town
+  // (everyone working a job) would leave a started landmark — e.g. the monastery —
+  // sitting at 0%. If a reachable site still has nobody building it, pull the
+  // nearest job-worker off their post to build it. Capped at MAX_BUILDERS and
+  // skipped once a builder is en route, so there's no churn.
+  for (const b of G.buildings) {
+    if (b.phase !== 'site' || b.builderCount() >= MAX_BUILDERS) continue;
+    let worker: typeof G.villagers[number] | null = null;
+    let bd = Infinity;
+    for (const v of G.villagers) {
+      if (!v.alive || v.sheltered || v.task.kind !== 'work' || v.cannotReach(b)) continue;
+      const d = (b.x - v.x) ** 2 + (b.z - v.z) ** 2;
+      if (d < bd) { bd = d; worker = v; }
+    }
+    if (worker) worker.orderBuild(b);
   }
 }

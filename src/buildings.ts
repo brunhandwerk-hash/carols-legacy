@@ -30,6 +30,7 @@ export interface BuildingDef {
   defendRange?: number; // metres — auto-damages wild animals within this radius
   defendDps?: number;   // damage per second dealt to animals in defendRange
   noFoundation?: boolean; // skip the terraced stone foundation (e.g. bridges)
+  needsWater?: boolean;   // can only be placed at the river's edge (e.g. the fishery)
   flatRadius?: number;    // override the flattened-ground radius (big landmarks need a wider level shelf than radius+8 gives on the coarse mesh)
   requires?: string[];    // building keys that must be 'done' before this unlocks
   // optional authored glTF "hero" model — swaps in for the procedural mesh once
@@ -973,6 +974,7 @@ export const DEFS: Record<string, BuildingDef> = {
     desc: 'A stilted hut and jetty on the Prahova. A steady catch of fish feeds the settlement. Build it at the water’s edge.',
     cost: { wood: 40, stone: 20 }, buildPoints: 38, popCap: 0, isDropoff: false, trains: false, radius: 4.5,
     requires: ['hut', 'lumbercamp'],
+    needsWater: true,
     foodTrickle: 0.7, jobSlots: 1,
     model: { url: '/models/kaykit/mill.gltf.glb', fitRadius: 4.5 },
     build: buildFishery,
@@ -1006,7 +1008,7 @@ export const DEFS: Record<string, BuildingDef> = {
   bridge: {
     key: 'bridge', name: 'Bridge',
     desc: 'A timber crossing over the Prahova, linking the two banks. Place it across the river.',
-    cost: { wood: 60, stone: 50, planks: 10 }, buildPoints: 60, popCap: 0, isDropoff: false, trains: false, radius: 4,
+    cost: { wood: 60, planks: 10 }, buildPoints: 60, popCap: 0, isDropoff: false, trains: false, radius: 4,
     requires: ['hut', 'lumbercamp'],
     noFoundation: true,
     model: { url: '/models/kaykit/bridge.gltf.glb', fitRadius: 6 },
@@ -1023,7 +1025,7 @@ export const DEFS: Record<string, BuildingDef> = {
   },
   monastery: {
     key: 'monastery', name: 'Sinaia Monastery', desc: 'Mihail Cantacuzino’s vow — the seed from which a town will grow. Pilgrims’ offerings fill the treasury.',
-    cost: { wood: 160, stone: 110, planks: 30, block: 20 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
+    cost: { wood: 260, stone: 200, planks: 60, block: 45 }, buildPoints: 420, popCap: 5, isDropoff: true, trains: true, radius: 19,
     coinTrickle: 0.5,
     // placeholder: the KayKit castle stands in for the monastery until a proper
     // church/monastery hero model is authored (see R5 follow-up)

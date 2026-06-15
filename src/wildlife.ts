@@ -203,7 +203,19 @@ export class Bear {
     else this.group.rotation.y = Math.atan2(tx - this.x, tz - this.z);
     if (d <= BEAR_CONTACT) {
       this.biteTimer += dt;
-      if (this.biteTimer >= BEAR_BITE_INTERVAL) { this.biteTimer = 0; this.target.takeDamage(BEAR_DMG); }
+      if (this.biteTimer >= BEAR_BITE_INTERVAL) {
+        this.biteTimer = 0;
+        const victim = this.target;
+        victim.takeDamage(BEAR_DMG);
+        // a kill is the bear's cue to break off: it has its prey and lumbers back
+        // into the forest, rather than turning on the next villager.
+        if (!victim.alive) {
+          toast('A villager was killed by a brown bear — the beast drags off its kill and retreats into the forest.');
+          this.target = null;
+          this.state = 'leave';
+          return;
+        }
+      }
     } else {
       this.biteTimer = Math.max(0, this.biteTimer - dt * 0.5); // decay, don't hard reset
     }

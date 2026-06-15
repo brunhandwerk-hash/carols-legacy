@@ -153,19 +153,19 @@ function inClearing(x: number, z: number): boolean {
 const RIVER_MEADOW = 45;          // open strip along the Prahova
 const EAST_PASTURE_H = 520;       // Baiu side turns to grass above this
 
-// A "card tree": two intersecting vertical quads textured with one painted fir
-// (brad). Reads as a 3D tree from the RTS camera at ~8 tris. Origin at the trunk
-// base. The artwork sits centred in the texture with wide margins, so the card is
-// slimmed to the fir's true aspect and its UVs cropped to the fir's bounding box
-// (measured off the 1408×768 texture: x 515..897, y 36 apex .. 684 trunk base).
+// A "card tree": two intersecting vertical quads textured with one stylized pine.
+// Reads as a 3D tree from the RTS camera at ~8 tris. Origin at the trunk base. The
+// artwork sits centred in the texture with wide transparent margins, so the card
+// is slimmed to the pine's true aspect and its UVs cropped to the pine's bounding
+// box (measured off the SVG viewBox 680×540: x 228..452, y 62 apex .. 518 base).
 function buildCardTreeGeometry(): THREE.BufferGeometry {
-  const w = 7.7, h = 13;
+  const w = 6.5, h = 13;
   const p1 = new THREE.PlaneGeometry(w, h); p1.translate(0, h / 2, 0);
   const p2 = new THREE.PlaneGeometry(w, h); p2.translate(0, h / 2, 0); p2.rotateY(Math.PI / 2);
   const g = mergeGeometries([p1, p2]);
   p1.dispose(); p2.dispose();
-  const u0 = 515 / 1408, u1 = 897 / 1408;        // tree spans x 515..897
-  const v0 = 1 - 684 / 768, v1 = 1 - 36 / 768;   // trunk base..apex (texture flipY)
+  const u0 = 228 / 680, u1 = 452 / 680;          // tree spans x 228..452
+  const v0 = 1 - 518 / 540, v1 = 1 - 62 / 540;   // trunk base..apex (texture flipY)
   const uv = g.attributes.uv as THREE.BufferAttribute;
   for (let i = 0; i < uv.count; i++) {
     uv.setXY(i, u0 + uv.getX(i) * (u1 - u0), v0 + uv.getY(i) * (v1 - v0));
@@ -174,15 +174,14 @@ function buildCardTreeGeometry(): THREE.BufferGeometry {
   return g;
 }
 
-// Card-tree material: the painted fir PNG, alpha-tested (opaque pass, no sorting,
-// works with GTAO). The source ships with an opaque grey backdrop, so brad_cut.png
-// is a copy with that backdrop keyed out to real alpha. The texture is sRGB so the
-// GPU decodes it to linear on sample. Lit by the HDRI env + sun, with a touch of
-// self-illumination so the trees lift out of shadow and sit with the lit ground.
+// Card-tree material: the stylized pine PNG, alpha-tested (opaque pass, no sorting,
+// works with GTAO). The texture is sRGB so the GPU decodes it to linear on sample.
+// Lit by the HDRI env + sun, with a touch of self-illumination so the trees lift
+// out of shadow and sit with the brightly-lit buildings/ground.
 let cardTreeMat: THREE.MeshStandardMaterial | null = null;
 function cardTreeMaterial(): THREE.MeshStandardMaterial {
   if (cardTreeMat) return cardTreeMat;
-  const tex = new THREE.TextureLoader().load('/textures/foliage/brad_cut.png');
+  const tex = new THREE.TextureLoader().load('/textures/foliage/stylized_pine_tree_transparent.png');
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   cardTreeMat = new THREE.MeshStandardMaterial({
