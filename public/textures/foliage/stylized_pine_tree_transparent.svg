@@ -1,0 +1,30 @@
+<svg width="100%" viewBox="0 0 680 540" role="img" xmlns="http://www.w3.org/2000/svg" style="">
+<title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Stylized 3D-look pine tree on transparent background</title>
+<desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">A conifer with four layered foliage tiers, soft green shading and a tapered brown trunk, rendered as an isolated game asset with no background.</desc>
+<defs>
+<radialGradient id="fg" cx="36%" cy="26%" r="88%">
+<stop offset="0%" stop-color="#83cc86"/>
+<stop offset="42%" stop-color="#4f9a5b"/>
+<stop offset="100%" stop-color="#2a5e37"/>
+</radialGradient>
+<linearGradient id="tk" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0%" stop-color="#aa7740"/>
+<stop offset="48%" stop-color="#7d5128"/>
+<stop offset="100%" stop-color="#523314"/>
+</linearGradient>
+</defs>
+
+<path d="M322 450 L317 506 Q340 518 363 506 L358 450 Z" fill="url(#tk)" style="stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<path d="M340 325 C292 368 246 414 228 455 Q248 472 268 468 Q290 452 312 456 Q334 476 356 456 Q378 452 400 468 Q422 472 452 455 C434 414 388 368 340 325 Z" fill="url(#fg)" style="stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<ellipse cx="282" cy="392" rx="30" ry="44" fill="#a6dba8" opacity="0.32" style="fill:rgb(166, 219, 168);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.32;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<path d="M340 240 C300 282 260 328 244 370 Q270 386 296 380 Q320 372 340 382 Q360 372 384 380 Q410 386 436 370 C420 328 380 282 340 240 Z" fill="url(#fg)" style="stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<ellipse cx="293" cy="305" rx="27" ry="42" fill="#a6dba8" opacity="0.32" style="fill:rgb(166, 219, 168);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.32;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<path d="M340 150 C308 188 276 238 262 278 Q288 292 314 286 Q334 280 340 288 Q346 280 366 286 Q392 292 418 278 C404 238 372 188 340 150 Z" fill="url(#fg)" style="stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<ellipse cx="306" cy="214" rx="23" ry="40" fill="#a6dba8" opacity="0.32" style="fill:rgb(166, 219, 168);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.32;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<path d="M340 62 C314 100 292 150 282 186 Q306 198 330 192 Q340 188 350 192 Q374 198 398 186 C388 150 366 100 340 62 Z" fill="url(#fg)" style="stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<ellipse cx="321" cy="122" rx="19" ry="38" fill="#a6dba8" opacity="0.32" style="fill:rgb(166, 219, 168);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.32;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+</svg>
