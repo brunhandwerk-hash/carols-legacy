@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { terrainHeight, surfaceHeight, walkable } from './terrain';
+import { terrainHeight, surfaceHeight, walkable, terrainSlope, inMap } from './terrain';
 import { G, ResourceNode, GatherKind } from './state';
 import { Building, nearestDropoff, gatherBonusAt } from './buildings';
 import { hideNode } from './world';
@@ -15,7 +15,6 @@ type Task =
   | { kind: 'shelter'; building: Building; sub: 'go' | 'in' }
   | { kind: 'fight'; bear: Bear; sub: 'go' | 'work' };
 
-const REFUGE_RANGE = 70; // a threatened villager runs to a building this close
 const SHELTER_SAFE = 48;  // emerges once no bear has been this near for a moment
 
 const cloth = (color: number, rough = 0.86): THREE.MeshStandardMaterial =>
@@ -82,6 +81,7 @@ export class Villager {
   maxHp = 40;
   alive = true;
   sheltered = false;
+  autoGather = false; // gathering as a labor fallback (interruptible) vs a manual order
   workplace: Building | null = null; // assigned workplace, if any
   // what to go back to once a bear scare passes (auto-resume)
   private resume: { kind: 'work'; b: Building } | { kind: 'gather'; node: ResourceNode } | { kind: 'build'; b: Building } | null = null;
@@ -92,7 +92,14 @@ export class Villager {
   private path: { x: number; z: number }[] = []; // current nav waypoints
   private pathI = 0;
   private navTX = NaN; private navTZ = NaN; // target the path was computed for
+  private stuck = false;        // set by navToward when the final target is unreachable
+  private bestD = Infinity;     // closest we've come to the current nav target
+  private noProgressT = 0;      // time since we last got meaningfully closer to it
+  private repathed = false;     // whether we've already tried a fresh route this stall
+  private gSkip = new Set<ResourceNode>(); // nodes this worker can't reach — skip them
   private gNode: ResourceNode | null = null; // node a gather-camp worker is harvesting
+  private bSkip = new Map<Building, number>(); // buildings we couldn't reach → game-time to retry
+  private forceDist = 0; // metres clipped through unwalkable terrain at the current obstacle
 
   constructor(x: number, z: number, scene: THREE.Scene, profession?: Profession) {
     const outfit = profession
@@ -154,7 +161,7 @@ export class Villager {
     const t = this.task;
     const load = this.carry > 0 ? ` (carrying ${this.carry} ${this.carryKind})` : '';
     switch (t.kind) {
-      case 'idle': return 'Idle — awaiting orders';
+      case 'idle': return 'Idle — looking for work';
       case 'move': return `Walking${load}`;
       case 'gather': {
         const what = { wood: 'timber', stone: 'stone', food: 'berries' }[t.node.kind];
@@ -173,21 +180,20 @@ export class Villager {
 
   setSelected(sel: boolean): void { this.ring.visible = sel; }
 
-  // react to a wild animal: take refuge in the nearest building if one is close,
-  // otherwise stand and fight it off. A player-ordered fight is left alone.
-  alarm(bear: Bear): void {
+  // react to a wild animal: villagers always flee to the nearest building — they
+  // never fight. With no buildings to shelter in, they carry on (and stay exposed).
+  alarm(_bear: Bear): void {
     if (this.sheltered) return;
     if (this.task.kind === 'shelter') return;
-    if (this.task.kind === 'fight') return;
+    const refuge = this.nearestRefuge();
+    if (!refuge) return;
     // remember what we were doing so we can return to it once the coast is clear
     const t = this.task;
     if (t.kind === 'work') this.resume = { kind: 'work', b: t.building };
     else if (t.kind === 'gather') this.resume = { kind: 'gather', node: t.node };
     else if (t.kind === 'build') this.resume = { kind: 'build', b: t.building };
     this.leaveWork(); this.clearPath();
-    const refuge = this.nearestRefuge();
-    if (refuge) this.task = { kind: 'shelter', building: refuge, sub: 'go' };
-    else this.task = { kind: 'fight', bear, sub: 'go' };
+    this.task = { kind: 'shelter', building: refuge, sub: 'go' };
   }
 
   // return to the pre-scare job if it's still valid, otherwise stand down
@@ -202,8 +208,10 @@ export class Villager {
     this.task = { kind: 'idle' };
   }
 
+  // nearest finished building to flee into — no range cap, since villagers always
+  // run for shelter when a beast appears (they never stand and fight).
   private nearestRefuge(): Building | null {
-    let best: Building | null = null, bd = REFUGE_RANGE * REFUGE_RANGE;
+    let best: Building | null = null, bd = Infinity;
     for (const b of G.buildings) {
       if (b.phase !== 'done') continue;
       const d = (b.x - this.x) ** 2 + (b.z - this.z) ** 2;
@@ -232,19 +240,17 @@ export class Villager {
     const s = G.selected.indexOf(this); if (s >= 0) G.selected.splice(s, 1);
   }
 
-  orderAttack(bear: Bear): void { this.leaveWork(); this.task = { kind: 'fight', bear, sub: 'go' }; }
-
   // stop building/working/approaching a structure that's being demolished
   releaseFrom(b: Building): void {
     if (this.workplace === b) this.leaveWork();
     if ((this.task.kind === 'build' || this.task.kind === 'work') && this.task.building === b) this.task = { kind: 'idle' };
   }
 
-  orderMove(x: number, z: number): void { this.resume = null; this.leaveWork(); this.clearPath(); this.task = { kind: 'move', x, z }; }
   orderGather(node: ResourceNode): void {
     this.leaveWork(); this.clearPath();
     if (this.carry > 0 && this.carryKind !== node.kind) this.carry = 0;
     this.task = { kind: 'gather', node, sub: 'go' };
+    this.autoGather = false; // a manual order by default; labor.ts marks auto-gather
   }
   orderBuild(b: Building): void { this.leaveWork(); this.clearPath(); this.task = { kind: 'build', building: b, sub: 'go' }; }
 
@@ -280,6 +286,17 @@ export class Villager {
     if (this.task.kind === 'work') this.task = { kind: 'idle' };
   }
 
+  // mark a building as unreachable for this villager for a while, so labour gives
+  // it a different job instead of re-sending it to (e.g.) a quarry across the
+  // river. The mark expires so a later bridge re-opens the route.
+  private skipUnreachable(b: Building): void { this.bSkip.set(b, G.time + 30); }
+  cannotReach(b: Building): boolean {
+    const until = this.bSkip.get(b);
+    if (until === undefined) return false;
+    if (G.time >= until) { this.bSkip.delete(b); return false; }
+    return true;
+  }
+
   // is this villager present and working at building b? (drives production)
   isWorkingAt(b: Building): boolean {
     if (this.task.kind !== 'work' || this.task.building !== b) return false;
@@ -295,12 +312,19 @@ export class Villager {
     const dx = tx - this.x, dz = tz - this.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
     if (dist < 0.6) return true;
+    // If we're standing on unwalkable ground (pushed onto a steep slope, terrain
+    // sampled differently from the coarse pathfinding grid, or a bad spawn), the
+    // normal step below can't help — every candidate cell is likely blocked too,
+    // so we'd freeze forever. Escape toward the nearest open ground first.
+    if (!walkable(this.x, this.z)) { this.unstick(dt); return false; }
     const slope = Math.max(0, terrainHeight(tx, tz) - terrainHeight(this.x, this.z)) / Math.max(dist, 0.01);
     const sp = this.speed * Math.max(0.45, 1 - slope * 0.5);
     const step = Math.min(dist, sp * dt);
     let nx = this.x + (dx / dist) * step;
     let nz = this.z + (dz / dist) * step;
-    if (!walkable(nx, nz)) {
+    if (walkable(nx, nz)) {
+      this.forceDist = 0; // back on open ground — refresh the clip-through budget
+    } else {
       // steer around the obstacle: try progressively wider deflections off the
       // direct heading before declaring the leg stuck
       const base = Math.atan2(dx, dz);
@@ -309,9 +333,23 @@ export class Villager {
         const a = base + off;
         const tnx = this.x + Math.sin(a) * step;
         const tnz = this.z + Math.cos(a) * step;
-        if (walkable(tnx, tnz)) { nx = tnx; nz = tnz; moved = true; break; }
+        if (walkable(tnx, tnz)) { nx = tnx; nz = tnz; moved = true; this.forceDist = 0; break; }
       }
-      if (!moved) return true; // genuinely boxed in — give up on this leg
+      // Boxed in on every side — a flatten rim around a building pad, a pocket
+      // between tightly-packed buildings, rocks crowding the gap. Rather than
+      // freeze, take a reduced forced step STRAIGHT at the target to clip through.
+      // But only for a short distance (FORCE_BUDGET): enough to squeeze past a
+      // building or rim, NOT enough to wade across a wide river. Once the budget
+      // is spent we hold, so the stall detector declares the leg stuck and the
+      // task is abandoned — e.g. a quarry on the far bank with no bridge.
+      if (!moved) {
+        const FORCE_BUDGET = 8; // metres
+        if (this.forceDist >= FORCE_BUDGET) return false;
+        const fstep = step * 0.6;
+        this.forceDist += fstep;
+        nx = this.x + (dx / dist) * fstep;
+        nz = this.z + (dz / dist) * fstep;
+      }
     }
     this.group.position.set(nx, surfaceHeight(nx, nz), nz);
     this.group.rotation.y = Math.atan2(dx, dz);
@@ -321,20 +359,77 @@ export class Villager {
     return false;
   }
 
+  // Escape a stuck/unwalkable spot: sample directions around us and move toward
+  // the one that lands on the most-walkable nearby ground (an actually-walkable
+  // cell wins; otherwise the gentlest slope). Bypasses the normal walkable gate
+  // for this single step so the villager can climb back out of a bad pocket.
+  private unstick(dt: number): void {
+    const step = Math.max(this.speed * dt, 0.4);
+    let bestA = 0, bestScore = -Infinity;
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2;
+      const px = this.x + Math.sin(a) * step;
+      const pz = this.z + Math.cos(a) * step;
+      if (!inMap(px, pz)) continue;
+      const score = (walkable(px, pz) ? 1000 : 0) - terrainSlope(px, pz);
+      if (score > bestScore) { bestScore = score; bestA = a; }
+    }
+    const nx = this.x + Math.sin(bestA) * step;
+    const nz = this.z + Math.cos(bestA) * step;
+    if (!inMap(nx, nz)) return;
+    this.group.position.set(nx, surfaceHeight(nx, nz), nz);
+    this.group.rotation.y = bestA;
+    this.bobPhase += dt * 11;
+    this.body.position.y = 0.85 + Math.abs(Math.sin(this.bobPhase)) * 0.1;
+  }
+
   // move toward a (static) destination along an obstacle-avoiding path. Computes
   // the path once per destination (recomputed only if the target moves), then
   // walks the waypoints. Returns true on arrival at the final target.
   private navToward(tx: number, tz: number, dt: number): boolean {
-    if (this.path.length === 0 || (this.navTX - tx) ** 2 + (this.navTZ - tz) ** 2 > 9) {
+    this.stuck = false;
+    const sameTarget = (this.navTX - tx) ** 2 + (this.navTZ - tz) ** 2 <= 9; // NaN ⇒ false
+    if (!sameTarget) {
+      // brand-new destination: fresh path + fresh stall window
       this.navTX = tx; this.navTZ = tz;
       this.path = findPath(this.x, this.z, tx, tz);
       this.pathI = 0;
+      this.bestD = Math.hypot(this.x - tx, this.z - tz); this.noProgressT = 0; this.repathed = false;
+    } else if (this.path.length === 0) {
+      // same target but the path ran out / was cleared — rebuild, keep the window
+      this.path = findPath(this.x, this.z, tx, tz);
+      this.pathI = 0;
     }
-    if (this.path.length === 0) return this.stepToward(tx, tz, dt);
-    const wp = this.path[Math.min(this.pathI, this.path.length - 1)];
-    if (this.stepToward(wp.x, wp.z, dt)) {
-      this.pathI++;
-      if (this.pathI >= this.path.length) { this.path = []; this.navTX = NaN; return true; }
+
+    let arrived = false;
+    if (this.path.length === 0) arrived = this.stepToward(tx, tz, dt);
+    else {
+      const wp = this.path[Math.min(this.pathI, this.path.length - 1)];
+      if (this.stepToward(wp.x, wp.z, dt)) {
+        this.pathI++;
+        if (this.pathI >= this.path.length) { this.path = []; arrived = true; }
+      }
+    }
+    if (arrived) { this.navTX = NaN; return true; }
+
+    // Stuck detection by progress TOWARD THE GOAL (not raw displacement): a
+    // villager sliding along a barrier — wall-following up a riverbank that has
+    // no crossing, say — keeps "moving" but never gets closer, and raw-distance
+    // checks would never flag it. So we track the closest we've come; whenever we
+    // beat it we're making headway, otherwise the no-progress clock runs. One
+    // fresh route is tried first; sustained no-progress declares the leg stuck so
+    // the caller bails (e.g. abandons a quarry on the far side of the river). A
+    // real detour around an obstacle still closes distance within the window.
+    const distNow = Math.hypot(this.x - tx, this.z - tz);
+    if (distNow < this.bestD - 2) {
+      this.bestD = distNow; this.noProgressT = 0; this.repathed = false;
+    } else {
+      this.noProgressT += dt;
+      if (!this.repathed && this.noProgressT >= 3) {
+        this.path = findPath(this.x, this.z, tx, tz); this.pathI = 0; this.repathed = true;
+      } else if (this.noProgressT >= 8) {
+        this.stuck = true; this.navTX = NaN; this.path = [];
+      }
     }
     return false;
   }
@@ -353,13 +448,38 @@ export class Villager {
       } else this.navToward(camp.x, camp.z, dt);
       return;
     }
-    if (!this.gNode || !this.gNode.alive) { this.gNode = this.findCampNode(camp, kind); this.clearPath(); }
+    if (!this.gNode || !this.gNode.alive) {
+      // only reset the path when the node actually changes — clearing it every
+      // tick (e.g. when no node is found) would keep resetting nav progress and
+      // the worker could never be declared stuck / give up an unreachable camp
+      const next = this.findCampNode(camp, kind);
+      if (next !== this.gNode) { this.gNode = next; this.clearPath(); }
+    }
     const node = this.gNode;
+    // the whole site is cut off if we can't even get near the camp itself (e.g. a
+    // quarry on the far bank of an un-bridged river) — give it up so labour can
+    // re-task us elsewhere instead of leaving us pinned at the water's edge
+    const giveUpCamp = (): void => { this.skipUnreachable(camp); this.leaveWork(); this.task = { kind: 'idle' }; };
+    const farFromCamp = (): boolean =>
+      (this.x - camp.x) ** 2 + (this.z - camp.z) ** 2 > (camp.def.boostRange ?? 50) ** 2;
     if (!node) {
-      if ((this.x - camp.x) ** 2 + (this.z - camp.z) ** 2 > (camp.def.radius + 3) ** 2) this.navToward(camp.x, camp.z, dt);
+      if ((this.x - camp.x) ** 2 + (this.z - camp.z) ** 2 > (camp.def.radius + 3) ** 2) {
+        this.navToward(camp.x, camp.z, dt);
+        if (this.stuck) giveUpCamp();
+      }
       return;
     }
-    if ((this.x - node.x) ** 2 + (this.z - node.z) ** 2 > 3.5 * 3.5) { this.navToward(node.x, node.z, dt); return; }
+    if ((this.x - node.x) ** 2 + (this.z - node.z) ** 2 > 3.5 * 3.5) {
+      this.navToward(node.x, node.z, dt);
+      // can't reach this node — blacklist it and pick another next tick so the
+      // worker doesn't get pinned against the river/cliff in front of it; but if
+      // we never even made it to the camp, the site itself is unreachable.
+      if (this.stuck) {
+        this.gSkip.add(node); this.gNode = null;
+        if (farFromCamp()) giveUpCamp();
+      }
+      return;
+    }
     // at the node: harvest
     this.workTimer += dt;
     this.body.rotation.x = Math.sin(this.workTimer * 7) * 0.25;
@@ -369,18 +489,28 @@ export class Villager {
       this.carryKind = kind;
       this.carry += 2;
       node.amount -= 2;
+      this.gSkip.clear(); // we're clearly able to reach nodes — forget old skips
       if (node.amount <= 0) { node.alive = false; hideNode(node); this.gNode = null; }
     }
   }
 
   private findCampNode(camp: Building, kind: GatherKind): ResourceNode | null {
-    let best: ResourceNode | null = null;
-    let bd = ((camp.def.boostRange ?? 50) * 1.5) ** 2;
+    // Harvest the nearest matching node, with NO hard range cap: a camp placed
+    // just outside the trees (e.g. next to base storage, on the rim of the big
+    // starting clearing) would otherwise find nothing inside boostRange and leave
+    // its workers standing idle. Walking a bit further beats not working at all;
+    // truly unreachable nodes are still blacklisted via gSkip / the stuck logic.
+    // (Nearby nodes win automatically since we keep the closest, and the boost
+    // bonus still only applies within boostRange via gatherBonusAt.)
+    let best: ResourceNode | null = null, bd = Infinity;
     for (const n of G.nodes) {
-      if (!n.alive || n.kind !== kind) continue;
+      if (!n.alive || n.kind !== kind || this.gSkip.has(n)) continue;
       const d = (n.x - camp.x) ** 2 + (n.z - camp.z) ** 2;
       if (d < bd) { bd = d; best = n; }
     }
+    // every in-range node is currently blacklisted as unreachable — clear the
+    // skip list and retry from scratch (terrain/obstacles may have changed)
+    if (!best && this.gSkip.size) { this.gSkip.clear(); return this.findCampNode(camp, kind); }
     return best;
   }
 
@@ -390,7 +520,7 @@ export class Villager {
       case 'idle':
         break;
       case 'move':
-        if (this.navToward(t.x, t.z, dt)) this.task = { kind: 'idle' };
+        if (this.navToward(t.x, t.z, dt) || this.stuck) this.task = { kind: 'idle' };
         break;
       case 'gather': {
         if (!t.node.alive) {
@@ -400,13 +530,8 @@ export class Villager {
           else { this.task = { kind: 'idle' }; break; }
         }
         if (t.sub === 'go') {
-          // stepToward returns true on arrival OR when stuck — only start working
-          // if we actually reached the node, otherwise we'd "gather" from afar
-          if (this.navToward(t.node.x, t.node.z, dt)) {
-            const near = (this.x - t.node.x) ** 2 + (this.z - t.node.z) ** 2 < 4 * 4;
-            if (near) { t.sub = 'work'; this.workTimer = 0; }
-            else { this.task = { kind: 'idle' }; } // blocked — can't reach this node
-          }
+          if (this.navToward(t.node.x, t.node.z, dt)) { t.sub = 'work'; this.workTimer = 0; }
+          else if (this.stuck) this.task = { kind: 'idle' }; // can't reach this node
         } else if (t.sub === 'work') {
           this.workTimer += dt;
           // chopping sway
@@ -447,6 +572,7 @@ export class Villager {
           const done = this.navToward(b.x, b.z, dt);
           const near = (this.x - b.x) ** 2 + (this.z - b.z) ** 2 < (b.def.radius + 2.5) ** 2;
           if (done || near) { t.sub = 'work'; this.workTimer = 0; }
+          else if (this.stuck) { this.skipUnreachable(b); this.task = { kind: 'idle' }; } // can't reach the site
         } else {
           this.workTimer += dt;
           this.body.rotation.x = Math.sin(this.workTimer * 8) * 0.2;
