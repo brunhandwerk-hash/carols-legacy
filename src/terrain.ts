@@ -160,13 +160,15 @@ function riverBlend(x: number, z: number): number {
 }
 
 // ---- plot flattening (building sites stamped level into the real terrain) ----
-export interface FlatSpot { x: number; z: number; r: number }
+// r = full-flat plateau radius (blends out smoothly to 1.9·r). terrace = a runtime
+// building shelf (mergeable with neighbours); false = a fixed landmark plot.
+export interface FlatSpot { x: number; z: number; r: number; terrace: boolean }
 const flatSpots: FlatSpot[] = [];
 const flatHeights: number[] = [];
 let terrainMesh: THREE.Mesh | null = null; // set by buildTerrainMesh, deformed by flattenUnder
 
 export function registerFlatSpot(x: number, z: number, r: number): void {
-  flatSpots.push({ x, z, r });
+  flatSpots.push({ x, z, r, terrace: false });
   flatHeights.push(rawHeight(x, z));
 }
 
@@ -175,17 +177,41 @@ export function registerFlatSpot(x: number, z: number, r: number): void {
 // surfaceHeight stay the single source of truth) then re-seats every nearby mesh
 // vertex to the new, flattened height with a smooth falloff into the slope.
 export function flattenUnder(x: number, z: number, r: number): void {
-  registerFlatSpot(x, z, r);
+  // Merge the whole CONNECTED cluster of building terraces this footprint joins
+  // onto ONE shared level. Otherwise overlapping plots level to different ground
+  // heights and their blends fight — leaving buildings sunk on the uphill side and
+  // floating on the downhill side. The merge is transitive (A–B–C chains count),
+  // so a building bridging two others pulls all three together; with one shared
+  // level the overlapping (smooth, wide) blends all aim at the same height and
+  // every footprint stays flat. Fixed landmark plots are never merged.
+  const merged: number[] = [];
+  const frontier: { x: number; z: number; r: number }[] = [{ x, z, r }];
+  while (frontier.length) {
+    const f = frontier.pop()!;
+    for (let i = 0; i < flatSpots.length; i++) {
+      const s = flatSpots[i];
+      if (!s.terrace || merged.includes(i)) continue;
+      if (Math.hypot(f.x - s.x, f.z - s.z) < f.r + s.r) { merged.push(i); frontier.push({ x: s.x, z: s.z, r: s.r }); }
+    }
+  }
+  let hSum = rawHeight(x, z), wSum = 1;
+  for (const i of merged) { hSum += flatHeights[i]; wSum += 1; }
+  const shared = hSum / wSum;
+  flatSpots.push({ x, z, r, terrace: true });
+  flatHeights.push(shared);
+  for (const i of merged) flatHeights[i] = shared; // pull the whole cluster to the shared level
   if (!terrainMesh) return;
+  // re-deform the mesh over the new shelf AND every terrace whose level we moved
+  const zones = [{ x, z, r }];
+  for (const i of merged) { const s = flatSpots[i]; zones.push({ x: s.x, z: s.z, r: s.r }); }
   const geo = terrainMesh.geometry as THREE.BufferGeometry;
   const pos = geo.attributes.position as THREE.BufferAttribute;
-  const reach = r * 1.9 + 1; // registerFlatSpot blends out to 1.9·r
-  const reach2 = reach * reach;
   for (let i = 0; i < pos.count; i++) {
     const vx = pos.getX(i), vz = pos.getZ(i);
-    const dx = vx - x, dz = vz - z;
-    if (dx * dx + dz * dz > reach2) continue;
-    pos.setY(i, terrainHeight(vx, vz)); // terrainHeight now includes the new flat spot
+    for (const zn of zones) {
+      const dx = vx - zn.x, dz = vz - zn.z, reach = zn.r * 1.9 + 1;
+      if (dx * dx + dz * dz <= reach * reach) { pos.setY(i, terrainHeight(vx, vz)); break; }
+    }
   }
   pos.needsUpdate = true;
   geo.computeVertexNormals();

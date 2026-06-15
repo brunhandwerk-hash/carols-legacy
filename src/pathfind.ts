@@ -22,27 +22,37 @@ function inBuilding(x: number, z: number): boolean {
   return false;
 }
 
-function clear(x: number, z: number): boolean {
-  return walkable(x, z) && !inBuilding(x, z);
-}
+type Passable = (x: number, z: number) => boolean;
+// strict: route around buildings. loose: a STUCK fallback that may clip through a
+// building (terrain still blocks) — better to walk through a wall than freeze.
+const passStrict: Passable = (x, z) => walkable(x, z) && !inBuilding(x, z);
+const passLoose: Passable = (x, z) => walkable(x, z);
 
-// line-of-sight: every sampled point along the segment is clear ground
-function los(ax: number, az: number, bx: number, bz: number): boolean {
+// line-of-sight: every sampled point along the segment is passable
+function los(ax: number, az: number, bx: number, bz: number, pass: Passable): boolean {
   const d = Math.hypot(bx - ax, bz - az);
   const steps = Math.max(1, Math.ceil(d / 6));
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
-    if (!clear(ax + (bx - ax) * t, az + (bz - az) * t)) return false;
+    if (!pass(ax + (bx - ax) * t, az + (bz - az) * t)) return false;
   }
   return true;
 }
 
-// Waypoints from (sx,sz) to (tx,tz) that avoid obstacles. The last point is the
-// exact target. If the straight line is already clear — or no path is found —
-// returns just [target] so the caller falls back to a direct walk.
+// Waypoints from (sx,sz) to (tx,tz). Tries the strict route (around buildings)
+// first; if the goal is sealed off (the user's "let them through if stuck" case),
+// retries with buildings passable. The last point is always the exact target; a
+// direct walk is the final fallback.
 export function findPath(sx: number, sz: number, tx: number, tz: number): { x: number; z: number }[] {
-  if (los(sx, sz, tx, tz)) return [{ x: tx, z: tz }];
+  if (los(sx, sz, tx, tz, passStrict)) return [{ x: tx, z: tz }];
+  return gridPath(sx, sz, tx, tz, passStrict)
+    ?? gridPath(sx, sz, tx, tz, passLoose)
+    ?? [{ x: tx, z: tz }];
+}
 
+// A* over a locally-built grid. Returns null when no route exists under `pass`
+// (so findPath can try a looser predicate), or the string-pulled waypoints.
+function gridPath(sx: number, sz: number, tx: number, tz: number, pass: Passable): { x: number; z: number }[] | null {
   const minX = Math.max(MAP.minX, Math.min(sx, tx) - MARGIN);
   const maxX = Math.min(MAP.maxX, Math.max(sx, tx) + MARGIN);
   const minZ = Math.max(MAP.minZ, Math.min(sz, tz) - MARGIN);
@@ -63,7 +73,7 @@ export function findPath(sx: number, sz: number, tx: number, tz: number): { x: n
     for (let c = 0; c < cols; c++) {
       const i = idx(c, r);
       const x = wx(c), z = wz(r);
-      ok[i] = clear(x, z);
+      ok[i] = pass(x, z);
       graph.addNode(new YUKA.NavNode(i, new YUKA.Vector3(x, 0, z)));
     }
   }
@@ -90,11 +100,11 @@ export function findPath(sx: number, sz: number, tx: number, tz: number): { x: n
     return best;
   };
   const s = nearestWalkable(sx, sz), t = nearestWalkable(tx, tz);
-  if (s < 0 || t < 0) return [{ x: tx, z: tz }];
+  if (s < 0 || t < 0) return null;
 
   const astar = new YUKA.AStar(graph, s, t);
   astar.search();
-  if (!astar.found) return [{ x: tx, z: tz }];
+  if (!astar.found) return null;
 
   const pts = (astar.getPath() as number[]).map((i) => {
     const n = graph.getNode(i);
@@ -107,7 +117,7 @@ export function findPath(sx: number, sz: number, tx: number, tz: number): { x: n
   let ax = sx, az = sz, j = 0;
   while (j < pts.length) {
     let k = pts.length - 1;
-    while (k > j && !los(ax, az, pts[k].x, pts[k].z)) k--;
+    while (k > j && !los(ax, az, pts[k].x, pts[k].z, pass)) k--;
     out.push(pts[k]);
     ax = pts[k].x; az = pts[k].z; j = k + 1;
   }

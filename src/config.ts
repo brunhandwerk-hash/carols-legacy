@@ -8,7 +8,7 @@ export const MAP = {
 
 export const PALETTE = {
   sky: 0xbdd2e0,
-  fog: 0xd8e0e2,
+  fog: 0xc4c9d2, // matched to the sky HDRI horizon so haze blends into the dome
   sun: 0xfff1d6,
   grassLow: 0x8fae5a,
   grassHigh: 0x7d9c54,
@@ -25,7 +25,7 @@ export const PALETTE = {
 };
 
 export const START = {
-  wood: 100,
+  wood: 160,
   stone: 0,
   food: 120, // a cushion now that food buildings need assigned workers
   coin: 0,

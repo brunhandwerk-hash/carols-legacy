@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { surfaceHeight } from './terrain';
+import { surfaceHeight, flattenUnder } from './terrain';
 import { G, ResKind, RES_KINDS, GatherKind, pay, canAfford } from './state';
-import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial, retainingWallMaterial } from './materials';
+import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial } from './materials';
 import { loadModel, fitModel, FitOpts } from './models';
+import { reseatNodesNear } from './world';
 import type { Villager } from './units';
 
 export type BuildingPhase = 'planned' | 'site' | 'done';
@@ -29,6 +30,7 @@ export interface BuildingDef {
   defendRange?: number; // metres — auto-damages wild animals within this radius
   defendDps?: number;   // damage per second dealt to animals in defendRange
   noFoundation?: boolean; // skip the terraced stone foundation (e.g. bridges)
+  flatRadius?: number;    // override the flattened-ground radius (big landmarks need a wider level shelf than radius+8 gives on the coarse mesh)
   requires?: string[];    // building keys that must be 'done' before this unlocks
   // optional authored glTF "hero" model — swaps in for the procedural mesh once
   // loaded (landmarks only); the procedural `build` stays as the fallback
@@ -61,10 +63,10 @@ function tag<T extends THREE.Object3D>(o: T, role: 'wall' | 'roof'): T {
 
 // ---- shared materials: runtime-generated PBR (see materials.ts) ----
 const M = {
-  log: woodMaterial(0x7a5b3a, 11),
-  logDark: woodMaterial(0x5e4429, 12),
-  thatch: thatchMaterial(0xb09455),
-  shingle: tileMaterial(0x6b4f3a, 44),      // wooden shingles
+  log: woodMaterial(0xa07b4c, 11),          // warmer/brighter so it sits closer to the glTF kit
+  logDark: woodMaterial(0x77593a, 12),
+  thatch: thatchMaterial(0xc0a566),
+  shingle: tileMaterial(0x8a6749, 44),      // wooden shingles
   whitewash: plasterMaterial(0xf2ecdd),
   roofRed: tileMaterial(0x9c4a38, 41),       // fired clay tiles
   roofGray: tileMaterial(0x707a82, 42),      // slate
@@ -797,9 +799,39 @@ function buildBridge(g: THREE.Group): void {
   }
 }
 
+// the upgraded crossing: same span, rebuilt in dressed stone — a solid arched
+// deck on heavier piers with low stone parapets instead of timber railings.
+function buildBridgeStone(g: THREE.Group): void {
+  const L = 36, wHalf = 2.7, deckY = 1.9;
+  // heavier stone piers
+  for (const pxr of [-1, -0.5, 0, 0.5, 1]) {
+    const pier = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.35, deckY + 3.2, 8), M.stoneDark);
+    pier.position.set(pxr * L * 0.46, deckY - (deckY + 3.2) / 2, 0);
+    pier.castShadow = true; pier.receiveShadow = true;
+    g.add(pier);
+  }
+  // a cambered dressed-stone deck
+  const segs = 9;
+  for (let i = 0; i < segs; i++) {
+    const t = i / (segs - 1);
+    const sx = (t - 0.5) * L;
+    const camber = Math.sin(t * Math.PI) * 0.7;
+    g.add(box(L / segs + 0.1, 0.36, wHalf * 2, M.stone, sx, deckY + camber, 0));
+  }
+  // low solid parapets along both edges
+  for (const sz of [-1, 1] as const) {
+    for (let i = 0; i < segs; i++) {
+      const t = i / (segs - 1);
+      const sx = (t - 0.5) * (L - 1);
+      const camber = Math.sin(t * Math.PI) * 0.7;
+      g.add(box(L / segs, 0.7, 0.34, M.stone, sx, deckY + camber + 0.45, sz * (wHalf - 0.15)));
+    }
+  }
+}
+
 function buildStana(g: THREE.Group): void {
-  // a Carpathian shepherds' dairy (stână): a low log dwelling, a fenced paddock
-  // of grazing cattle, a butter churn and rounds of cheese drying on a rack
+  // a mountain cattle dairy: a low log byre, a fenced paddock of grazing cattle,
+  // a butter churn and rounds of cheese drying on a rack
   const W = 3.8, D = 3.2;
   g.add(box(W + 0.5, 0.35, D + 0.5, M.stone, -3.2, 0, -2.2));
   g.add(tag(box(W, 1.95, D, M.log, -3.2, 0.35, -2.2), 'wall'));
@@ -883,87 +915,127 @@ export const DEFS: Record<string, BuildingDef> = {
   camp: {
     key: 'camp', name: 'Founders’ Hall', desc: 'The first hearth of the valley — the heart of the settlement. Drop off resources, shelter new settlers, and ward off wolves and bears nearby.',
     cost: {}, buildPoints: 1, popCap: 5, isDropoff: true, trains: true, radius: 8,
-    defendRange: 28, defendDps: 7, build: buildCamp,
+    defendRange: 28, defendDps: 7,
+    model: { url: '/models/kaykit/barracks.gltf.glb', fitRadius: 8 },
+    build: buildCamp,
   },
   hut: {
     key: 'hut', name: 'Hut', desc: 'A shepherd’s log hut. Houses 3 settlers.',
-    cost: { wood: 40 }, buildPoints: 30, popCap: 3, isDropoff: false, trains: false, radius: 4, build: buildHut,
+    cost: { wood: 40 }, buildPoints: 30, popCap: 3, isDropoff: false, trains: false, radius: 4,
+    model: { url: '/models/kaykit/house.gltf.glb', fitRadius: 4 },
+    build: buildHut,
   },
   sheepfold: {
-    key: 'sheepfold', name: 'Sheepfold', desc: 'Mountain sheep — a steady trickle of food.',
-    cost: { wood: 50 }, buildPoints: 40, popCap: 0, isDropoff: false, trains: false, radius: 6.5,
-    foodTrickle: 0.55, jobSlots: 1, build: buildSheepfold,
+    key: 'sheepfold', name: 'Stână (Sheepfold)', desc: 'A Carpathian shepherds’ sheepfold — mountain sheep milked and shorn for cheese, wool and mutton. A steady trickle of food.',
+    cost: { wood: 45, stone: 15 }, buildPoints: 40, popCap: 0, isDropoff: false, trains: false, radius: 6.5,
+    requires: ['hut', 'lumbercamp'],
+    foodTrickle: 0.55, jobSlots: 1,
+    model: { url: '/models/kaykit/farm_plot.gltf.glb', fitRadius: 6.5 },
+    build: buildSheepfold,
   },
   lumbercamp: {
     key: 'lumbercamp', name: 'Lumber Camp',
     desc: 'A sawpit in the woods. Its woodcutters fell nearby trees and stack the timber. Place it among the forest.',
     cost: { wood: 30 }, buildPoints: 28, popCap: 0, isDropoff: true, trains: false, radius: 5,
-    boosts: 'wood', boostRange: 42, jobSlots: 3, build: buildLumberCamp,
+    boosts: 'wood', boostRange: 42, jobSlots: 3,
+    model: { url: '/models/kaykit/lumbermill.gltf.glb', fitRadius: 5 },
+    build: buildLumberCamp,
   },
   quarry: {
     key: 'quarry', name: 'Quarry',
     desc: 'Worked rock face. Its masons cut nearby stone. Place it by an outcrop.',
-    cost: { wood: 45 }, buildPoints: 36, popCap: 0, isDropoff: true, trains: false, radius: 5.5,
-    boosts: 'stone', boostRange: 42, jobSlots: 3, build: buildQuarry,
+    cost: { wood: 50 }, buildPoints: 36, popCap: 0, isDropoff: true, trains: false, radius: 5.5,
+    requires: ['hut', 'lumbercamp'],
+    boosts: 'stone', boostRange: 42, jobSlots: 3,
+    model: { url: '/models/kaykit/mine.gltf.glb', fitRadius: 5.5 },
+    build: buildQuarry,
   },
   forager: {
     key: 'forager', name: 'Forager’s Hut',
     desc: 'Berry-pickers’ camp. Its foragers gather berries from nearby thickets.',
     cost: { wood: 30 }, buildPoints: 26, popCap: 0, isDropoff: true, trains: false, radius: 4.5,
-    boosts: 'food', boostRange: 40, jobSlots: 2, build: buildForager,
+    requires: ['hut', 'lumbercamp'],
+    boosts: 'food', boostRange: 40, jobSlots: 2,
+    model: { url: '/models/kaykit/well.gltf.glb', fitRadius: 4.5 },
+    build: buildForager,
   },
   hunters: {
     key: 'hunters', name: 'Hunter’s Lodge',
     desc: 'Trappers and marksmen. Brings in game meat, and shoots wolves and bears that stray within range.',
-    cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
-    foodTrickle: 0.4, defendRange: 50, defendDps: 17, jobSlots: 1, build: buildHunters,
+    cost: { wood: 55, stone: 25 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    requires: ['hut', 'lumbercamp'],
+    foodTrickle: 0.4, defendRange: 50, defendDps: 17, jobSlots: 1,
+    model: { url: '/models/kaykit/archeryrange.gltf.glb', fitRadius: 5 },
+    build: buildHunters,
   },
   fishery: {
     key: 'fishery', name: 'Fisherman’s Hut',
     desc: 'A stilted hut and jetty on the Prahova. A steady catch of fish feeds the settlement. Build it at the water’s edge.',
-    cost: { wood: 45 }, buildPoints: 38, popCap: 0, isDropoff: false, trains: false, radius: 4.5,
-    foodTrickle: 0.7, jobSlots: 1, build: buildFishery,
+    cost: { wood: 40, stone: 20 }, buildPoints: 38, popCap: 0, isDropoff: false, trains: false, radius: 4.5,
+    requires: ['hut', 'lumbercamp'],
+    foodTrickle: 0.7, jobSlots: 1,
+    model: { url: '/models/kaykit/mill.gltf.glb', fitRadius: 4.5 },
+    build: buildFishery,
   },
   stana: {
-    key: 'stana', name: 'Stână (Mountain Dairy)',
-    desc: 'A shepherds’ dairy. Cattle graze the paddock and are milked for a steady supply of food. Best on open meadow.',
-    cost: { wood: 55 }, buildPoints: 44, popCap: 0, isDropoff: false, trains: false, radius: 7,
-    requires: ['sheepfold'],
-    foodTrickle: 0.85, jobSlots: 2, build: buildStana,
+    key: 'stana', name: 'Cattle Dairy',
+    desc: 'A mountain byre and paddock. Cattle graze and are milked for butter and cheese — a strong, steady supply of food. Best on open meadow.',
+    cost: { wood: 50, stone: 30 }, buildPoints: 44, popCap: 0, isDropoff: false, trains: false, radius: 7,
+    requires: ['hut', 'lumbercamp'],
+    foodTrickle: 0.85, jobSlots: 2,
+    build: buildStana,
   },
   sawmill: {
     key: 'sawmill', name: 'Sawmill',
     desc: 'A water-powered joagăr. Steadily saws stockpiled timber into planks — needed for finer buildings.',
-    cost: { wood: 55 }, buildPoints: 46, popCap: 0, isDropoff: false, trains: false, radius: 5,
-    requires: ['lumbercamp'],
-    produces: { input: { wood: 2 }, output: { planks: 1 }, interval: 2.5 }, jobSlots: 2, build: buildSawmill,
+    cost: { wood: 50, stone: 30 }, buildPoints: 46, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    requires: ['hut', 'lumbercamp'],
+    produces: { input: { wood: 2 }, output: { planks: 1 }, interval: 2.5 }, jobSlots: 2,
+    model: { url: '/models/kaykit/watermill.gltf.glb', fitRadius: 5 },
+    build: buildSawmill,
   },
   stonecutter: {
     key: 'stonecutter', name: 'Stonecutter’s Yard',
     desc: 'Masons dress rough stone into building blocks — needed for the monastery and grand houses.',
-    cost: { wood: 60 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    cost: { wood: 55, stone: 35 }, buildPoints: 50, popCap: 0, isDropoff: false, trains: false, radius: 5,
     requires: ['quarry'],
-    produces: { input: { stone: 2 }, output: { block: 1 }, interval: 3 }, jobSlots: 2, build: buildStonecutter,
+    produces: { input: { stone: 2 }, output: { block: 1 }, interval: 3 }, jobSlots: 2,
+    model: { url: '/models/kaykit/market.gltf.glb', fitRadius: 5 },
+    build: buildStonecutter,
   },
   bridge: {
     key: 'bridge', name: 'Bridge',
     desc: 'A timber crossing over the Prahova, linking the two banks. Place it across the river.',
-    cost: { wood: 70, stone: 40 }, buildPoints: 60, popCap: 0, isDropoff: false, trains: false, radius: 4,
-    noFoundation: true, build: buildBridge,
+    cost: { wood: 60, stone: 50, planks: 10 }, buildPoints: 60, popCap: 0, isDropoff: false, trains: false, radius: 4,
+    requires: ['hut', 'lumbercamp'],
+    noFoundation: true,
+    model: { url: '/models/kaykit/bridge.gltf.glb', fitRadius: 6 },
+    build: buildBridge,
+  },
+  // upgrade-only (not in the build toolbar): the cost is the price to rebuild a
+  // finished timber Bridge in dressed stone, charged by the panel's upgrade button.
+  bridge_stone: {
+    key: 'bridge_stone', name: 'Stone Bridge',
+    desc: 'A permanent dressed-stone crossing of the Prahova.',
+    cost: { stone: 60, block: 20 }, buildPoints: 60, popCap: 0, isDropoff: false, trains: false, radius: 4,
+    noFoundation: true,
+    build: buildBridgeStone,
   },
   monastery: {
     key: 'monastery', name: 'Sinaia Monastery', desc: 'Mihail Cantacuzino’s vow — the seed from which a town will grow. Pilgrims’ offerings fill the treasury.',
-    cost: { wood: 180, stone: 90, block: 10 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
+    cost: { wood: 160, stone: 110, planks: 30, block: 20 }, buildPoints: 320, popCap: 5, isDropoff: true, trains: true, radius: 19,
     coinTrickle: 0.5,
-    // drop a monastery/church .glb at public/models/monastery.glb to use it; until
-    // then the procedural build below is the fallback
-    model: { url: '/models/monastery.glb', fitRadius: 16 },
+    // placeholder: the KayKit castle stands in for the monastery until a proper
+    // church/monastery hero model is authored (see R5 follow-up)
+    model: { url: '/models/kaykit/castle.gltf.glb', fitRadius: 16 },
     build: buildMonastery,
   },
   oldinn: {
     key: 'oldinn', name: 'Pilgrims’ Inn', desc: 'Lodging for travelers crossing the Predeal pass — their tolls swell the treasury. Its fine carpentry calls for sawn planks.',
-    cost: { wood: 80, planks: 16, stone: 30, coin: 60 }, buildPoints: 120, popCap: 4, isDropoff: false, trains: false, radius: 7,
-    coinTrickle: 0.7, build: buildInn,
+    cost: { wood: 100, stone: 50, planks: 24, block: 12, coin: 60 }, buildPoints: 120, popCap: 4, isDropoff: false, trains: false, radius: 7,
+    coinTrickle: 0.7,
+    model: { url: '/models/kaykit/market.gltf.glb', fitRadius: 7 },
+    build: buildInn,
   },
 };
 
@@ -978,7 +1050,7 @@ export class Building {
   group = new THREE.Group();
   structure = new THREE.Group();
   siteMarker: THREE.Group | null = null;
-  foundation: THREE.Group | null = null;
+  foundationDone = false; // terrain under the footprint has been flattened
   trainQueue: number[] = []; // remaining seconds per queued villager
   foodAccum = 0;
   coinAccum = 0;
@@ -1033,72 +1105,36 @@ export class Building {
     }).catch(() => { /* keep the procedural building */ });
   }
 
-  // terrace the ground under the footprint: a flat earthen cap with a stone
-  // retaining skirt that drops into the slope, so a building sits level on a
-  // hillside instead of floating or sinking. Cheap, and leaves the real terrain
-  // (and villager pathing height) untouched.
+  // Flatten the rendered terrain under the footprint (see flattenUnder) so the
+  // building sits on level ground — instead of bolting a stone-drum terrace on
+  // top of the slope. Then re-seat the building on the now-flattened surface.
   private addFoundation(): void {
-    if (this.foundation || this.def.noFoundation) return;
-    const baseY = this.group.position.y;
-    const padR = this.def.radius + 1.2;
-    // sample the surrounding ring: how far the downhill side drops below the
-    // building base, and how high the uphill side rises above it (both on the
-    // rendered mesh). Probe at the footprint edge AND a little beyond so a steep
-    // back slope is caught.
-    let lowest = 0, highest = 0;
-    for (let a = 0; a < 16; a++) {
-      const ang = (a / 16) * Math.PI * 2;
-      for (const rr of [this.def.radius, padR]) {
-        const sx = this.x + Math.cos(ang) * rr, sz = this.z + Math.sin(ang) * rr;
-        const d = surfaceHeight(sx, sz) - baseY;
-        lowest = Math.min(lowest, d);
-        highest = Math.max(highest, d);
-      }
+    if (this.foundationDone || this.def.noFoundation) return;
+    this.foundationDone = true;
+    // The flat zone must clear the footprint by ~a full terrain cell (~16 m), or
+    // the coarse mesh leaves the footprint's outer cells on the slope and the
+    // building sits half-buried / half-floating. radius + 16 levels it cleanly
+    // regardless of where it lands on the grid (blends out smoothly to ~1.9×).
+    const flatR = this.def.flatRadius ?? Math.max(this.def.radius + 16, 18);
+    const reach = flatR * 1.9 + 1;
+    flattenUnder(this.x, this.z, flatR);
+    // trees/rocks/berries near the footprint had their height baked in before
+    // the reshape — drop them back onto the new surface so nothing floats
+    reseatNodesNear(this.x, this.z, reach);
+    // the ground is now level at ~the centre height; sit the building on it with
+    // no extra lift (the old terrace lift is no longer needed)
+    this.group.position.y = surfaceHeight(this.x, this.z);
+    this.structure.position.y = 0;
+    if (this.heroModel) this.heroModel.position.y = 0;
+    // Merging terraces to a shared level moved the mesh under overlapping
+    // neighbours (and possibly shifted their level), but each building is seated
+    // only once at its own placement — so re-seat every building onto the current
+    // mesh. Far ones are unaffected (their surface height is unchanged); the few
+    // sharing this terrace settle onto it flush instead of buried or floating.
+    for (const b of G.buildings) {
+      if (b === this || b.def.noFoundation) continue;
+      b.group.position.y = surfaceHeight(b.x, b.z);
     }
-    // raise the whole building so its floor clears the highest surrounding
-    // ground — otherwise the uphill (back) wall sits buried in the slope.
-    const lift = Math.max(0, Math.min(14, highest + 0.3));
-    this.structure.position.y = lift;
-    const top = lift + 0.3;                                   // stone lip at floor
-    const bottom = Math.max(-18, Math.min(-0.8, lowest - 1.2));
-    const h = top - bottom;
-    const g = new THREE.Group();
-    // battered coursed-masonry retaining wall. Faceted (segments scale with
-    // size) and given a stone texture sized to ~1.4 m blocks so it reads as a
-    // built dry-stone wall, not a smooth drum.
-    const circ = 2 * Math.PI * padR;
-    const seg = Math.max(16, Math.min(48, Math.round(circ / 2.2)));
-    const wallMat = retainingWallMaterial(circ, h);
-    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(padR, padR * 1.08, h, seg), wallMat);
-    skirt.position.y = bottom + h / 2;
-    skirt.castShadow = true;
-    skirt.receiveShadow = true;
-    g.add(skirt);
-    // vertical buttress ribs spaced around the wall — articulation that reads as
-    // a real retaining structure rather than a featureless cylinder
-    const ribs = Math.max(6, Math.min(18, Math.round(circ / 6)));
-    for (let i = 0; i < ribs; i++) {
-      const ang = (i / ribs) * Math.PI * 2;
-      const rib = box(0.6, h - 0.2, 0.5, M.stoneDark, 0, 0, 0);
-      rib.position.set(Math.cos(ang) * (padR + 0.18), bottom + h / 2, Math.sin(ang) * (padR + 0.18));
-      rib.rotation.y = -ang;
-      rib.castShadow = true;
-      rib.receiveShadow = true;
-      g.add(rib);
-    }
-    // a darker coping course capping the wall, then the flattened grass platform
-    const course = new THREE.Mesh(new THREE.CylinderGeometry(padR + 0.22, padR + 0.22, 0.4, seg), M.stoneDark);
-    course.position.y = top - 0.22;
-    course.castShadow = true;
-    course.receiveShadow = true;
-    g.add(course);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(padR - 0.2, padR + 0.12, 0.5, seg), M.grass);
-    cap.position.y = top - 0.05;
-    cap.receiveShadow = true;
-    g.add(cap);
-    g.traverse((o) => { o.userData.building = this; });
-    this.foundation = g;
-    this.group.add(g);
   }
 
   private makeSiteMarker(phase: BuildingPhase): void {
@@ -1310,14 +1346,16 @@ export class Building {
 
   // tear the building down: refund part of its cost, free its workers, and — if
   // it's a landmark — leave its planned waymark so the site can be rebuilt.
-  demolish(): Partial<Record<ResKind, number>> {
+  // giveRefund=false skips the refund (used when one building replaces another,
+  // e.g. upgrading a timber bridge to stone — the upgrade is paid separately).
+  demolish(giveRefund = true): Partial<Record<ResKind, number>> {
     const scene = this.group.parent as THREE.Scene | null;
     for (const v of G.villagers) v.releaseFrom(this);
     if (this.phase === 'done') G.popCap -= this.def.popCap;
 
     const refund: Partial<Record<ResKind, number>> = {};
     const rate = this.phase === 'done' ? 0.5 : 0.75; // get more back from an unfinished site
-    for (const k of RES_KINDS) {
+    if (giveRefund) for (const k of RES_KINDS) {
       const amt = Math.floor((this.def.cost[k] ?? 0) * rate);
       if (amt > 0) { G.resources[k] += amt; refund[k] = amt; }
     }

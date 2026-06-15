@@ -111,31 +111,94 @@
     #minimap-wrap { right: 12px; bottom: 12px; padding: 6px; }
     #minimap { display: block; cursor: crosshair; border-radius: 3px; }
 
+    /* ---- glassy, Foundation-style build menu ---- */
     #buildbar {
-      bottom: 12px; left: 50%; transform: translateX(-50%);
-      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
-      max-width: 60vw; padding: 7px 9px;
+      bottom: 14px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; gap: 9px;
+      max-width: 76vw; padding: 11px 13px;
+      background: linear-gradient(180deg, rgba(30,25,18,0.66), rgba(14,11,8,0.82));
+      border: 1px solid rgba(212,168,67,0.22);
+      border-radius: 12px;
+      backdrop-filter: blur(16px) saturate(1.2);
+      -webkit-backdrop-filter: blur(16px) saturate(1.2);
+      box-shadow: 0 10px 36px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
     }
+    #buildbar .bb-head { display: flex; align-items: center; gap: 12px; padding: 0 2px; }
+    #buildbar .bb-title { font-size: 12px; letter-spacing: 3px; font-weight: bold; color: var(--accent); font-variant: small-caps; }
+    #buildbar .bb-search {
+      flex: 1; min-width: 0; font-family: inherit; font-size: 12px; color: var(--ink);
+      background: rgba(0,0,0,0.32); border: 1px solid rgba(212,168,67,0.25); border-radius: 999px; padding: 6px 13px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    #buildbar .bb-search::placeholder { color: rgba(240,230,210,0.4); }
+    #buildbar .bb-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(212,168,67,0.15); }
+    #buildbar .bb-scroll { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; max-width: 76vw; padding: 2px 2px 5px; }
+    #buildbar .bb-scroll::-webkit-scrollbar { height: 7px; }
+    #buildbar .bb-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+    #buildbar .bb-scroll::-webkit-scrollbar-thumb { background: rgba(212,168,67,0.4); border-radius: 4px; }
     #buildbar .bb {
-      display: flex; flex-direction: column; align-items: center; gap: 3px; width: 72px;
-      background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
-      border-radius: 5px; padding: 6px 4px; font-family: inherit; cursor: pointer;
+      flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 70px;
+      color: var(--ink); cursor: pointer; font-family: inherit;
+      background: linear-gradient(180deg, rgba(74,61,42,0.55), rgba(34,28,19,0.62));
+      border: 1px solid rgba(212,168,67,0.18); border-radius: 9px; padding: 7px 5px;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s, background 0.12s;
     }
-    #buildbar .bb:hover:not(:disabled) { background: #51422d; }
-    #buildbar .bb:disabled { opacity: 0.45; cursor: default; }
-    #buildbar .bb .ic { width: 24px; height: 24px; color: var(--accent); display: flex; align-items: center; justify-content: center; }
-    #buildbar .bb .ic svg { width: 24px; height: 24px; }
-    #buildbar .bb .nm { font-size: 10.5px; line-height: 1.1; text-align: center; }
-    #buildbar .bb.locked .nm { color: #d8775f; }
-    #buildbar .bb .cost { font-size: 9.5px; opacity: 0.9; display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; }
+    #buildbar .bb:hover:not(:disabled), #buildbar .bb:focus:not(:disabled) {
+      outline: none; transform: translateY(-3px); border-color: var(--accent);
+      background: linear-gradient(180deg, rgba(96,79,54,0.7), rgba(48,39,26,0.7));
+      box-shadow: 0 6px 18px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,168,67,0.35);
+    }
+    #buildbar .bb:disabled { opacity: 0.4; cursor: default; }
+    #buildbar .bb.locked { border-style: dashed; }
+    #buildbar .bb .bb-thumb {
+      width: 58px; height: 48px; display: flex; align-items: center; justify-content: center;
+    }
+    #buildbar .bb .bb-thumb img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.55)); }
+    #buildbar .bb .bb-thumb .ic { width: 28px; height: 28px; color: var(--accent); display: flex; }
+    #buildbar .bb .bb-thumb .ic svg { width: 28px; height: 28px; }
+    #buildbar .bb .cost { font-size: 9.5px; opacity: 0.92; display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; }
     #buildbar .bb .ci { display: inline-flex; align-items: center; gap: 2px; }
     #buildbar .bb .cdot { width: 7px; height: 7px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.4); display: inline-block; }
-    #buildbar .bb .cdot.wood { background: #8a5a2b; }
-    #buildbar .bb .cdot.planks { background: #c9a26a; }
-    #buildbar .bb .cdot.stone { background: #9a958c; }
-    #buildbar .bb .cdot.block { background: #c4bdaf; }
-    #buildbar .bb .cdot.food { background: #cc5a3a; }
-    #buildbar .bb .cdot.coin { background: #e7c64b; border-radius: 50%; }
+
+    /* hover/focus detail card, à la Foundation */
+    #bb-detail {
+      position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 10px;
+      background: linear-gradient(180deg, rgba(30,25,18,0.82), rgba(14,11,8,0.9));
+      border: 1px solid rgba(212,168,67,0.28); border-radius: 11px;
+      padding: 13px 15px; text-align: left; pointer-events: none;
+      backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+      box-shadow: 0 12px 38px rgba(0,0,0,0.55);
+    }
+    #bb-detail.hidden { display: none; }
+    #bb-detail .d-top { display: flex; gap: 13px; align-items: flex-start; margin-bottom: 9px; }
+    #bb-detail .d-pic {
+      flex: 0 0 auto; width: 88px; height: 88px; border-radius: 8px;
+      background: radial-gradient(circle at 50% 38%, rgba(212,168,67,0.16), rgba(0,0,0,0.25));
+      border: 1px solid rgba(212,168,67,0.2); object-fit: contain; padding: 4px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #bb-detail .d-pic-ph .ic, #bb-detail .d-pic-ph svg { width: 40px; height: 40px; color: var(--accent); }
+    #bb-detail .d-head { flex: 1; min-width: 0; }
+    #bb-detail .d-name { font-size: 16px; font-weight: bold; color: var(--accent); margin-bottom: 4px; }
+    #bb-detail .d-desc { font-size: 11.5px; line-height: 1.42; opacity: 0.82; }
+    #bb-detail .d-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+    #bb-detail .d-tag {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px;
+      background: rgba(0,0,0,0.3); border: 1px solid rgba(212,168,67,0.3); border-radius: 999px; padding: 3px 9px;
+    }
+    #bb-detail .d-cost { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+    #bb-detail .d-lbl { text-transform: uppercase; letter-spacing: 1.2px; font-size: 9px; opacity: 0.55; }
+    #bb-detail .d-free { opacity: 0.6; font-style: italic; }
+    #bb-detail .d-req { color: #d8775f; font-size: 11px; margin-top: 7px; }
+    #bb-detail .ci { display: inline-flex; align-items: center; gap: 3px; }
+    #bb-detail .cdot { width: 9px; height: 9px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.4); display: inline-block; }
+    /* resource-dot colors (shared by cards + detail) */
+    #buildbar .cdot.wood, #bb-detail .cdot.wood { background: #8a5a2b; }
+    #buildbar .cdot.planks, #bb-detail .cdot.planks { background: #c9a26a; }
+    #buildbar .cdot.stone, #bb-detail .cdot.stone { background: #9a958c; }
+    #buildbar .cdot.block, #bb-detail .cdot.block { background: #c4bdaf; }
+    #buildbar .cdot.food, #bb-detail .cdot.food { background: #cc5a3a; }
+    #buildbar .cdot.coin, #bb-detail .cdot.coin { background: #e7c64b; border-radius: 50%; }
 
     #gameover {
       position: fixed; inset: 0; background: rgba(12, 8, 6, 0.92); z-index: 11;
@@ -222,7 +285,8 @@
     <div id="minimap-wrap" class="panel"><canvas id="minimap" width="200" height="260"></canvas></div>
     <div id="banner"><div class="year"></div><div class="title"></div><div class="text"></div></div>
     <div id="toast"></div>
-    <div id="intro">
+    <!-- title screen disabled for now (re-enable by removing display:none) -->
+    <div id="intro" style="display:none">
       <div class="inner">
         <h1>CAROL'S LEGACY</h1>
         <h2>The Chronicle of Sinaia · 1690 – 1947</h2>
@@ -233,7 +297,7 @@
         <p>Guide this valley through two and a half centuries: raise the monastery, greet the railway,
            build a king his castle, survive a world war, and write Sinaia's chronicle.</p>
         <div class="controls">
-          Left-click — select &nbsp;·&nbsp; Left-drag — box-select &nbsp;·&nbsp; Right-click — move, gather, build &nbsp;·&nbsp; Right-drag — pan the map<br/>
+          Left-click — inspect a villager or building &nbsp;·&nbsp; Left-drag — box-select &nbsp;·&nbsp; Right-drag — pan the map<br/>
           WASD / arrows / screen-edge — pan &nbsp;·&nbsp; Tab — next idle villager &nbsp;·&nbsp; Wheel — zoom to cursor &nbsp;·&nbsp; Middle-drag or Ctrl+drag — rotate &amp; tilt &nbsp;·&nbsp; Q / E — rotate
         </div>
         <button class="act" id="start-btn">Begin · Anno 1690</button>

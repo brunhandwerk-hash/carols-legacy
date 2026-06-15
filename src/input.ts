@@ -1,12 +1,18 @@
 import * as THREE from 'three';
-import { MAP } from './config';
+import { MAP, START } from './config';
 import { terrainHeight, terrainSlope, inMap, riverX } from './terrain';
 import { G, canAfford, pay } from './state';
 import { Building, DEFS } from './buildings';
+import { loadModel, fitModel } from './models';
 import type { Villager } from './units';
-import type { Bear } from './wildlife';
-import { nodeFromInstance, nearestHarvestable, hideNode, WorldRefs } from './world';
+import { nearestHarvestable, hideNode, WorldRefs } from './world';
 import { setSelection, refreshSelectionPanel, setGhostRequest, toast, showNodeTip, hideNodeTip } from './ui';
+
+// a finished crossing (timber or stone) unlocks the far bank for building
+function bridgeBuilt(): boolean {
+  return G.buildings.some(
+    (b) => (b.def.key === 'bridge' || b.def.key === 'bridge_stone') && b.phase === 'done');
+}
 
 export interface CameraRig {
   target: { x: number; z: number };
@@ -25,10 +31,10 @@ export function initInput(
   world: WorldRefs,
 ): CameraRig {
   const rig = {
-    target: { x: 40, z: 190 }, // between hamlet and monastery knoll
-    yaw: 2.6,                   // looking north-west, up the valley
+    target: { x: 934, z: 700 }, // hardcoded opening view: low angle looking at the mountains
+    yaw: 0.349,
     dist: 220,
-    pitch: 0.95,
+    pitch: 0.30,
   };
 
   const keys = new Set<string>();
@@ -82,7 +88,7 @@ export function initInput(
     ring.position.y = 0.25;
     g.add(ring);
     const shape = new THREE.Group();
-    def.build(shape);
+    def.build(shape); // immediate procedural placeholder
     shape.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.material = okMat;
@@ -92,6 +98,18 @@ export function initInput(
     g.add(shape);
     world.scene.add(g);
     ghost = { key: defKey, mesh: g, ring, valid: false };
+    // if this building uses an authored glTF, show THAT shape in the preview so it
+    // matches what actually gets placed (tinted by updateGhost each frame)
+    if (def.model) {
+      const m = def.model;
+      loadModel(m.url).then((gl) => {
+        if (!ghost || ghost.key !== defKey) return; // cancelled or switched
+        const fitted = fitModel(gl, { fitRadius: m.fitRadius ?? def.radius, scale: m.scale, rotationY: m.rotationY, yOffset: m.yOffset });
+        fitted.traverse((o) => { if (o instanceof THREE.Mesh) o.castShadow = false; });
+        shape.clear(); // drop the procedural placeholder
+        shape.add(fitted);
+      }).catch(() => { /* keep the procedural placeholder */ });
+    }
   });
 
   function cancelGhost(): void {
@@ -109,7 +127,12 @@ export function initInput(
     // Keep the whole footprint out of the river channel; bridges may cross it.
     const riverDist = Math.abs(p.x - riverX(p.z));
     const riverOk = def.noFoundation || riverDist > 13 + def.radius;
-    let valid = inMap(p.x, p.z) && riverOk && terrainSlope(p.x, p.z) < 0.95;
+    // the far bank is off-limits until a bridge spans the river. Bridges (noFoundation)
+    // are exempt so the first crossing can always be placed.
+    const startSign = Math.sign(START.camp.x - riverX(START.camp.z));
+    const ptSign = Math.sign(p.x - riverX(p.z));
+    const sideOk = def.noFoundation || bridgeBuilt() || ptSign === startSign;
+    let valid = inMap(p.x, p.z) && riverOk && sideOk && terrainSlope(p.x, p.z) < 0.95;
     if (valid) {
       for (const b of G.buildings) {
         const d2 = (b.x - p.x) ** 2 + (b.z - p.z) ** 2;
@@ -122,7 +145,16 @@ export function initInput(
   }
 
   function placeGhost(): void {
-    if (!ghost || !ghost.valid) { if (ghost) toast('Cannot build here.'); return; }
+    if (!ghost || !ghost.valid) {
+      if (ghost) {
+        const p = groundPoint(pointerX, pointerY);
+        const def = DEFS[ghost.key];
+        const farBank = p && !def.noFoundation && !bridgeBuilt() &&
+          Math.sign(p.x - riverX(p.z)) !== Math.sign(START.camp.x - riverX(START.camp.z));
+        toast(farBank ? 'Bridge the Prahova to build on the far bank.' : 'Cannot build here.');
+      }
+      return;
+    }
     const def = DEFS[ghost.key];
     if (!canAfford(def.cost)) { toast('Not enough resources.'); cancelGhost(); return; }
     pay(def.cost);
@@ -161,7 +193,7 @@ export function initInput(
       dragStart = { x: e.clientX, y: e.clientY };
       dragging = false;
     } else if (e.button === 2) {
-      // right-click issues a command; right-drag pans the map (grab style)
+      // right-drag pans the map (grab style); a stationary right-click does nothing
       rDragStart = { x: e.clientX, y: e.clientY };
       panLast = { x: e.clientX, y: e.clientY };
       rDragging = false;
@@ -223,8 +255,8 @@ export function initInput(
       rDragStart = null;
       rDragging = false;
       if (ghost) { cancelGhost(); return; }
-      if (wasDrag) return;                   // it was a map-pan, not a command
-      issueCommand(e.clientX, e.clientY);    // right-click: move / gather / build
+      // right-click is camera-pan / ghost-cancel only — villagers are autonomous,
+      // so a stationary right-click no longer issues any command.
       return;
     }
     if (e.button !== 0 || !dragStart) return;
@@ -267,64 +299,8 @@ export function initInput(
     dragging = false;
   });
 
-  // ---- right-click commands (issued from pointerup when it wasn't a drag) ----
+  // right-click is reserved for the camera (pan) — villagers run themselves.
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-  function issueCommand(cx: number, cy: number): void {
-    if (G.selected.length === 0) return;
-    const hits = raycastAt(cx, cy, world.scene.children);
-    for (const h of hits) {
-      // a bear? send the selected villagers to drive it off
-      const bear = h.object.userData.bear as Bear | undefined;
-      if (bear && bear.alive) {
-        for (const v of G.selected) v.orderAttack(bear);
-        toast('Villagers move to drive off the bear!');
-        return;
-      }
-      // resource node?
-      if (h.object instanceof THREE.InstancedMesh && h.instanceId !== undefined) {
-        const node = nodeFromInstance(h.object, h.instanceId);
-        if (node) {
-          for (const v of G.selected) v.orderGather(node);
-          return;
-        }
-      }
-      const bld = h.object.userData.building as Building | undefined;
-      if (bld) {
-        if (bld.phase === 'site') {
-          for (const v of G.selected) v.orderBuild(bld);
-        } else if (bld.phase === 'planned') {
-          setSelection([], bld); // open its panel so the player can start it
-          toast(`${bld.def.name} — begin construction from its panel.`);
-        } else if (bld.def.jobSlots) {
-          for (const v of G.selected) v.orderWork(bld);
-          toast(`${bld.assignedWorkers()}/${bld.def.jobSlots} working at the ${bld.def.name}.`);
-          refreshSelectionPanel();
-        } else {
-          for (const v of G.selected) v.orderMove(bld.x + bld.def.radius + 1, bld.z + bld.def.radius + 1);
-        }
-        return;
-      }
-      if (h.object.name === 'terrain') {
-        // a click on/near any resource: trees aren't raycast (too many) and rocks
-        // are small, so snap to the nearest living node of any kind near the hit
-        const node = nearestHarvestable(h.point.x, h.point.z, 8);
-        if (node) {
-          for (const v of G.selected) v.orderGather(node);
-          return;
-        }
-        // formation: spread move targets in a loose grid
-        const n = G.selected.length;
-        const cols = Math.ceil(Math.sqrt(n));
-        G.selected.forEach((v, i) => {
-          const ox = ((i % cols) - (cols - 1) / 2) * 2.4;
-          const oz = (Math.floor(i / cols) - (cols - 1) / 2) * 2.4;
-          v.orderMove(h.point.x + ox, h.point.z + oz);
-        });
-        return;
-      }
-    }
-  }
 
   // ---- camera ----
   let orbit: { x: number; y: number } | null = null;
@@ -332,7 +308,13 @@ export function initInput(
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const oldDist = rig.dist;
-    rig.dist = Math.min(3400, Math.max(40, rig.dist * (e.deltaY > 0 ? 1.13 : 0.885)));
+    // dynamic zoom step: fine near the ground (precise framing of the action),
+    // growing larger the further out you are so you get in/out fast
+    const MIN_D = 40, MAX_D = 3400;
+    const t = (rig.dist - MIN_D) / (MAX_D - MIN_D); // 0 = closest, 1 = farthest
+    const step = 0.10 + 0.26 * t;                    // 10% step up close → 36% far out
+    const factor = e.deltaY > 0 ? 1 + step : 1 / (1 + step);
+    rig.dist = Math.min(MAX_D, Math.max(MIN_D, rig.dist * factor));
     // Google-Maps-style: zoom toward the point under the cursor
     if (rig.dist < oldDist) {
       const p = groundPoint(e.clientX, e.clientY);

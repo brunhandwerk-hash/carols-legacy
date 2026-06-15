@@ -239,7 +239,7 @@ function spawnWave(): void {
   if (firstWarning) {
     firstWarning = false;
     showBanner('Beware', 'Bears in the Valley',
-      'Brown bears prowl down from the forests to raid the hamlet. Build a Hunter’s Lodge to guard your people — or order villagers to drive the beasts off (right-click a bear).');
+      'Brown bears prowl down from the forests to raid the hamlet. Your villagers flee indoors when one nears — keep buildings close, and raise a Hunter’s Lodge to guard your people.');
   } else {
     toast(spawned > 1 ? `${spawned} brown bears approach from the forest!` : 'A brown bear approaches from the forest!');
   }

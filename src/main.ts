@@ -1,24 +1,26 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { START } from './config';
 import { buildWorld, updateForestReveal } from './world';
 import { G } from './state';
 import { Building, setOnBuildingComplete } from './buildings';
 import { Villager } from './units';
-import { initEras, updateEras, ERAS } from './eras';
+import { initEras, updateEras } from './eras';
 import { initInput, CameraRig } from './input';
 import { initMinimap, drawMinimap } from './minimap';
-import { updateHud, refreshSelectionPanel, refreshObjectives, showBanner, toast, setSelection, updateSelectionStatus, initBuildBar } from './ui';
+import { updateHud, refreshSelectionPanel, refreshObjectives, toast, setSelection, updateSelectionStatus, initBuildBar } from './ui';
 import { loadDem, loadBackdrop, lonLatToWorld, setRoads, updateWater } from './terrain';
 import { initWildlife, updateWildlife } from './wildlife';
 import { autoAssign } from './labor';
 import { updatePopulation, setPopulationCallbacks } from './population';
-import { saveGame, loadGame, hasSave } from './save';
+import { saveGame, loadGame } from './save';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -30,18 +32,31 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // stylized-realism pipeline: filmic tone-mapping + sRGB so PBR materials read right
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 0.9; // slightly dimmer than 1.05 (HDRI was a touch bright)
 
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xbdd2e0); // sky-colour fallback until the HDRI dome loads
 // far plane reaches past the backdrop massifs (~17 km out) so the real Bucegi
 // and Baiului peaks are not clipped on the horizon
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 70000);
 
-// soft image-based lighting so PBR materials catch ambient sky/ground bounce
+// Image-based lighting. A neutral RoomEnvironment is the immediate fallback so
+// PBR materials aren't black on the first frames; the real alpine sky HDRI then
+// loads and drives BOTH the skybox and the IBL — the single biggest step toward a
+// lit, "game" look (replaces the tiny 0.04 room bounce).
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-pmrem.dispose();
 renderer.setRenderTarget(null); // PMREM can leave its offscreen target bound
+
+new RGBELoader().load('/hdri/sky_2k.hdr', (hdr) => {
+  hdr.mapping = THREE.EquirectangularReflectionMapping;
+  const envRT = pmrem.fromEquirectangular(hdr);
+  scene.environment = envRT.texture;   // realistic sky bounce for every PBR surface
+  scene.background = hdr;               // painted sky dome behind the peaks
+  scene.environmentIntensity = 1.0;
+  pmrem.dispose();
+  renderer.setRenderTarget(null);
+});
 
 // ---- post-processing: ground-contact AO + a touch of bloom, filmic output ----
 // GTAO darkens crevices and where forms meet (eaves, walls, foundations) so the
@@ -65,6 +80,14 @@ composer.addPass(gtao);
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.16, 0.5, 0.85);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+// final colour grade: a gentle saturation lift (ACES tends to desaturate) for a
+// richer, less washed-out "game" look. Runs after OutputPass (sRGB output).
+const gradePass = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, saturation: { value: 1.18 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  fragmentShader: 'uniform sampler2D tDiffuse; uniform float saturation; varying vec2 vUv; void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.2125,0.7154,0.0721)); c.rgb = mix(vec3(l), c.rgb, saturation); gl_FragColor = c; }',
+});
+composer.addPass(gradePass);
 
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -113,25 +136,13 @@ async function boot(): Promise<void> {
     () => toast('A villager has starved — the larder is empty!'),
   );
 
-  rig = initInput(canvas, camera, world);
-  rig.jumpTo(START.camp.x - 30, START.camp.z - 40);
+  rig = initInput(canvas, camera, world); // opens on the hardcoded view (see rig defaults)
   initMinimap((x, z) => rig.jumpTo(x, z));
   initIdleCycler();
 
-  // ---- intro ----
-  document.getElementById('start-btn')!.addEventListener('click', () => {
-    document.getElementById('intro')!.style.display = 'none';
-    G.paused = false;
-    G.started = true;
-    const era = ERAS[0];
-    showBanner(era.yearLabel, era.introTitle, era.introText);
-  });
-  // offer to continue a saved game
-  if (hasSave()) {
-    const cont = document.getElementById('continue-btn')!;
-    cont.style.display = 'inline-block';
-    cont.addEventListener('click', () => { document.getElementById('intro')!.style.display = 'none'; doLoad(); });
-  }
+  // ---- no intro: load straight into the map (re-add the title screen later) ----
+  G.paused = false;
+  G.started = true;
 
   initControls();
   initBuildBar();
@@ -291,7 +302,7 @@ function tick(now: number): void {
   if (mapTimer > 0.25) {
     mapTimer = 0;
     drawMinimap(rig.target, rig.yaw, rig.dist * 1.6);
-    updateForestReveal();
+    updateForestReveal(rig.target.x, rig.target.z, rig.dist);
   }
 
   composer.render();

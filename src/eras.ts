@@ -40,6 +40,12 @@ function hasRefinery(): boolean {
   );
 }
 
+function hasBridge(): boolean {
+  return G.buildings.some(
+    (b) => b.phase === 'done' && (b.def.key === 'bridge' || b.def.key === 'bridge_stone'),
+  );
+}
+
 export const ERAS: Era[] = [
   {
     yearLabel: 'Anno 1690', enterYear: 1690,
@@ -49,6 +55,7 @@ export const ERAS: Era[] = [
     objectives: [
       obj('gathercamp', 'Raise a Lumber Camp or Quarry to work the land faster', () => hasGatherCamp()),
       obj('refine', 'Raise a Sawmill or Stonecutter’s Yard to refine raw goods', () => hasRefinery()),
+      obj('bridge', 'Bridge the Prahova to reach the far bank', () => hasBridge()),
       obj('monastery', 'Build the Sinaia Monastery (needs dressed stone blocks)', () => landmarkDone('monastery')),
       obj('pop8', 'Grow the settlement to 8 souls', () => pop() >= 8),
       obj('food100', 'Stockpile 100 food for the consecration feast', () => G.resources.food >= 100),

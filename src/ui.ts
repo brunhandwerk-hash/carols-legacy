@@ -1,5 +1,7 @@
+import * as THREE from 'three';
 import { G, canAfford, pay, ResKind } from './state';
-import { Building, DEFS, prereqsMet } from './buildings';
+import { Building, DEFS, prereqsMet, BuildingDef } from './buildings';
+import { riverX } from './terrain';
 import type { Villager } from './units';
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -36,6 +38,10 @@ export function setEraLabel(text: string): void {
 
 // ---- objectives ----
 import { ERAS } from './eras';
+import { renderBuildingThumbnails } from './thumbnails';
+
+// rendered building preview images, keyed by build def (filled async at startup)
+const thumbs: Record<string, string> = {};
 export function refreshObjectives(): void {
   const era = ERAS[G.eraIndex];
   $('obj-title').textContent = `${era.name} · ${era.yearLabel}`;
@@ -94,7 +100,7 @@ const ICONS: Record<string, string> = {
   hunters: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.4"/><line x1="12" y1="1.5" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22.5" y2="12"/></svg>',
   fishery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 C8 6 15 6 19 12 C15 18 8 18 4 12 Z"/><path d="M19 12 L22.5 9 L22.5 15 Z"/><circle cx="8.5" cy="11" r="0.9" fill="currentColor" stroke="none"/></svg>',
   bridge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9 C8 16 16 16 22 9"/><line x1="2" y1="9" x2="2" y2="15"/><line x1="22" y1="9" x2="22" y2="15"/><line x1="8" y1="13.2" x2="8" y2="17"/><line x1="16" y1="13.2" x2="16" y2="17"/><line x1="12" y1="14" x2="12" y2="17.4"/></svg>',
-  stana: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13 c0 -2.5 2 -4 4 -4 c1.3 0 2.4 0.6 3 1.6 M5 13 v4 h8 v-4"/><path d="M13 12 h3 l2 2 v3 h-5"/><circle cx="7.5" cy="15.2" r="0.7" fill="currentColor" stroke="none"/><path d="M16 11 l1.2 -1.4 M18 12 l1.6 -1"/></svg>',
+  stana: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7 C4 4 7 5 8 8"/><path d="M20 7 C20 4 17 5 16 8"/><path d="M6 8 C6 14 9 17 12 17 C15 17 18 14 18 8 C15 6.5 9 6.5 6 8 Z"/><ellipse cx="12" cy="13.7" rx="3.4" ry="2.4"/><circle cx="10" cy="11" r="0.7" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r="0.7" fill="currentColor" stroke="none"/></svg>',
   sawmill: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="13" r="5"/><circle cx="9" cy="13" r="1.2"/><path d="M9 8 v-2 M9 18 v2 M4 13 h-2 M14 13 h6 l2 2 v3 h-6"/></svg>',
   stonecutter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="13" width="8" height="6"/><path d="M3.5 13 l2 -2.5 h8 l-2 2.5 M11.5 13 l2 -2.5 v6 l-2 2.5"/><path d="M15 6 l4 4 l-2 2 l-4 -4 z"/></svg>',
   villager: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="7.5" r="3"/><path d="M5.5 20 c0 -4 3 -6.5 6.5 -6.5 s6.5 2.5 6.5 6.5"/></svg>',
@@ -135,12 +141,12 @@ export function refreshSelectionPanel(): void {
         if (!canAfford(b.def.cost)) { toast('Not enough resources.'); return; }
         pay(b.def.cost);
         b.startConstruction();
-        toast(`Construction of ${b.def.name} has begun — send villagers to build (right-click the site).`);
+        toast(`Construction of ${b.def.name} has begun — villagers will come to build it.`);
         refreshSelectionPanel();
       });
     } else if (b.phase === 'site') {
       const pct = Math.floor((b.progress / b.def.buildPoints) * 100);
-      sub.textContent = `Under construction — ${pct}%. Right-click with villagers selected to build.`;
+      sub.textContent = `Under construction — ${pct}%. Villagers will build it.`;
     } else {
       sub.textContent = b.def.desc;
       if (b.def.jobSlots) {
@@ -164,11 +170,27 @@ export function refreshSelectionPanel(): void {
         actions.appendChild(hint);
       }
     }
+    if (b.phase === 'done' && b.def.key === 'bridge') {
+      const up = DEFS.bridge_stone;
+      actionCard(actions, 'hammer', 'Upgrade to Stone Bridge', up.cost, !canAfford(up.cost), () => {
+        if (!canAfford(up.cost)) { toast('Not enough resources.'); return; }
+        const scene = b.group.parent as THREE.Scene | null;
+        if (!scene) return;
+        pay(up.cost);
+        const x = b.x, z = b.z;
+        // re-derive the across-river orientation exactly as bridge placement does
+        const rotY = Math.atan2((riverX(z + 8) - riverX(z - 8)) / 16, 1);
+        b.demolish(false); // remove the timber bridge without a refund (upgrade paid above)
+        new Building('bridge_stone', x, z, 'done', scene, rotY);
+        toast('The timber bridge is rebuilt in dressed stone.');
+        setSelection([], null);
+      });
+    }
     if (b.demolishable) {
       const btn = actionCard(actions, 'demolish', 'Demolish', {}, false, () => {
         const name = b.def.name;
         const refund = b.demolish();
-        const got = (['wood', 'stone', 'food', 'coin'] as ResKind[])
+        const got = (['wood', 'planks', 'stone', 'block', 'food', 'coin'] as ResKind[])
           .filter((k) => refund[k]).map((k) => `${refund[k]} ${k}`).join(', ');
         toast(got ? `${name} demolished — recovered ${got}.` : `${name} demolished.`);
         setSelection([], null);
@@ -185,11 +207,19 @@ export function refreshSelectionPanel(): void {
   }
   panel.style.display = 'block';
   if (sel.length === 1) {
-    const p = sel[0].profession;
+    const v = sel[0];
+    const p = v.profession;
     name.textContent = p.charAt(0).toUpperCase() + p.slice(1);
-  } else {
-    name.textContent = `${sel.length} Villagers`;
+    sub.textContent = v.describeActivity();
+    if (v.carry > 0) {
+      const carry = document.createElement('div');
+      carry.style.cssText = 'font-size:12.5px;opacity:0.8;margin-top:2px';
+      carry.textContent = `Carrying ${v.carry} ${v.carryKind}`;
+      actions.appendChild(carry);
+    }
+    return;
   }
+  name.textContent = `${sel.length} Villagers`;
   sub.textContent = selectionStatusText(sel);
   // building is done from the always-on build bar, not here (see initBuildBar)
 }
@@ -197,27 +227,94 @@ export function refreshSelectionPanel(): void {
 // ---- always-on build toolbar (build without selecting anyone) ----
 const BUILD_KEYS = ['hut', 'sheepfold', 'lumbercamp', 'quarry', 'forager', 'sawmill', 'stonecutter', 'hunters', 'fishery', 'stana', 'bridge'] as const;
 const buildBtns: Record<string, HTMLButtonElement> = {};
+let buildSearch = ''; // live search query; locked buildings stay hidden regardless
 
 function reqNames(def: { requires?: string[] }): string {
   return (def.requires ?? []).map((k) => DEFS[k]?.name ?? k).join(', ');
 }
 
+// Foundation-style detail card: name, description, the production chain / yields,
+// and the upfront cost — shown when a build icon is hovered or focused.
+function buildDetail(def: BuildingDef): string {
+  const chip = (k: string, v: number) => `<span class="ci"><span class="cdot ${k}"></span>${v}</span>`;
+  const pic = thumbs[def.key] ? `<img class="d-pic" src="${thumbs[def.key]}" alt="">` : `<span class="d-pic d-pic-ph">${ICONS[def.key] ?? ''}</span>`;
+  const parts: string[] = [
+    `<div class="d-top">${pic}<div class="d-head"><div class="d-name">${def.name}</div><div class="d-desc">${def.desc}</div></div></div>`,
+  ];
+  const tags: string[] = [];
+  if (def.produces) {
+    const out = Object.entries(def.produces.output).map(([k, v]) => chip(k, v as number)).join('');
+    const inp = Object.entries(def.produces.input).map(([k, v]) => chip(k, v as number)).join('');
+    tags.push(`<span class="d-tag">Produces ${out} from ${inp} every ${def.produces.interval}s</span>`);
+  }
+  if (def.foodTrickle) tags.push(`<span class="d-tag"><span class="cdot food"></span>Food +${def.foodTrickle}/s</span>`);
+  if (def.coinTrickle) tags.push(`<span class="d-tag"><span class="cdot coin"></span>Coin +${def.coinTrickle}/s</span>`);
+  if (def.boosts) tags.push(`<span class="d-tag">Speeds nearby ${def.boosts} gathering</span>`);
+  if (def.popCap) tags.push(`<span class="d-tag">Houses ${def.popCap}</span>`);
+  if (def.jobSlots) tags.push(`<span class="d-tag">${def.jobSlots} job${def.jobSlots > 1 ? 's' : ''}</span>`);
+  if (tags.length) parts.push(`<div class="d-tags">${tags.join('')}</div>`);
+  const cost = costChips(def.cost);
+  parts.push(`<div class="d-cost"><span class="d-lbl">Upfront cost</span>${cost || '<span class="d-free">none</span>'}</div>`);
+  if (!prereqsMet(def)) parts.push(`<div class="d-req">🔒 Requires ${reqNames(def)}</div>`);
+  return parts.join('');
+}
+
 export function initBuildBar(): void {
   const bar = $('buildbar');
   bar.innerHTML = '';
+
+  const detail = document.createElement('div');
+  detail.id = 'bb-detail';
+  detail.className = 'hidden';
+
+  const head = document.createElement('div');
+  head.className = 'bb-head';
+  head.innerHTML = '<span class="bb-title">BUILD</span>';
+  const search = document.createElement('input');
+  search.className = 'bb-search';
+  search.type = 'text';
+  search.placeholder = 'Search buildings…';
+  head.appendChild(search);
+
+  const scroll = document.createElement('div');
+  scroll.className = 'bb-scroll';
+
+  bar.appendChild(detail);
+  bar.appendChild(head);
+  bar.appendChild(scroll);
+
   for (const key of BUILD_KEYS) {
     const def = DEFS[key];
     const btn = document.createElement('button');
     btn.className = 'bb';
     btn.innerHTML =
-      `<span class="ic">${ICONS[key] ?? ''}</span>` +
-      `<span class="nm">${def.name}</span>` +
+      `<span class="bb-thumb"><span class="ic">${ICONS[key] ?? ''}</span></span>` +
       `<span class="cost">${costChips(def.cost)}</span>`;
+    const show = () => { detail.innerHTML = buildDetail(def); detail.classList.remove('hidden'); };
+    btn.addEventListener('mouseenter', show);
+    btn.addEventListener('focus', show);
     btn.addEventListener('click', (e) => { e.stopPropagation(); ghostRequest(key); });
-    bar.appendChild(btn);
+    scroll.appendChild(btn);
     buildBtns[key] = btn;
   }
+
+  // hide the detail card when the pointer leaves the whole bar
+  bar.addEventListener('mouseleave', () => detail.classList.add('hidden'));
+  // live filter
+  search.addEventListener('click', (e) => e.stopPropagation());
+  search.addEventListener('input', () => {
+    buildSearch = search.value.trim().toLowerCase();
+    refreshBuildBar(); // visibility is owned by refreshBuildBar (search AND unlocked)
+  });
+
   refreshBuildBar();
+
+  // render a 3D preview thumbnail for each building and slot it into the cards
+  void renderBuildingThumbnails(BUILD_KEYS, (key, url) => {
+    thumbs[key] = url;
+    const slot = buildBtns[key]?.querySelector('.bb-thumb');
+    if (slot) slot.innerHTML = `<img src="${url}" alt="">`;
+  });
 }
 
 export function refreshBuildBar(): void {
@@ -225,12 +322,13 @@ export function refreshBuildBar(): void {
     const def = DEFS[key];
     const btn = buildBtns[key];
     if (!btn) continue;
+    // Locked buildings (prereqs not finished) are hidden entirely; the search box
+    // can only narrow the already-unlocked set, never reveal a locked building.
     const unlocked = prereqsMet(def);
-    btn.disabled = !unlocked || !canAfford(def.cost);
-    btn.classList.toggle('locked', !unlocked);
-    const nm = btn.querySelector('.nm');
-    if (nm) nm.textContent = unlocked ? def.name : `🔒 ${def.name}`;
-    btn.title = unlocked ? def.desc : `Requires ${reqNames(def)}`;
+    const matches = !buildSearch || def.name.toLowerCase().includes(buildSearch);
+    btn.style.display = unlocked && matches ? '' : 'none';
+    btn.disabled = !canAfford(def.cost);
+    btn.title = def.name;
   }
 }
 
