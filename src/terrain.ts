@@ -65,19 +65,33 @@ export function worldToLonLat(x: number, z: number): { lon: number; lat: number 
   };
 }
 
-// bilinear sample of the DEM, in metres above valley base
+// clamped DEM lookup at integer grid indices
+function demAt(ix: number, iz: number): number {
+  ix = ix < 0 ? 0 : ix > meta.w - 1 ? meta.w - 1 : ix;
+  iz = iz < 0 ? 0 : iz > meta.h - 1 ? meta.h - 1 : iz;
+  return dem[iz * meta.w + ix];
+}
+
+// 1-D Catmull-Rom: smooth cubic through p1,p2 using neighbours p0,p3 (t in [0,1])
+function catmull(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  return p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
+}
+
+// Bicubic (Catmull-Rom) sample of the DEM, in metres above valley base. Bicubic is
+// C1-continuous (no crease at every grid line, unlike bilinear) and it smooths the
+// DEM's 1 m integer quantization into continuous slopes — so the rendered ground
+// reads as natural hillsides instead of grid-aligned facets/terraces. Costs 16
+// taps vs 4; fine for the one-time mesh build and the modest runtime sampling.
 function rawHeight(x: number, z: number): number {
   const fx = ((x - MAP.minX) / MAP.width) * (meta.w - 1);
   const fz = ((z - MAP.minZ) / MAP.depth) * (meta.h - 1);
-  const x0 = Math.max(0, Math.min(meta.w - 2, Math.floor(fx)));
-  const z0 = Math.max(0, Math.min(meta.h - 2, Math.floor(fz)));
-  const tx = Math.max(0, Math.min(1, fx - x0));
-  const tz = Math.max(0, Math.min(1, fz - z0));
-  const i = z0 * meta.w + x0;
-  const h00 = dem[i], h10 = dem[i + 1], h01 = dem[i + meta.w], h11 = dem[i + meta.w + 1];
-  const top = h00 + (h10 - h00) * tx;
-  const bot = h01 + (h11 - h01) * tx;
-  return top + (bot - top) * tz - baseElev;
+  const ix = Math.floor(fx), iz = Math.floor(fz);
+  const tx = fx - ix, tz = fz - iz;
+  const c0 = catmull(demAt(ix - 1, iz - 1), demAt(ix, iz - 1), demAt(ix + 1, iz - 1), demAt(ix + 2, iz - 1), tx);
+  const c1 = catmull(demAt(ix - 1, iz),     demAt(ix, iz),     demAt(ix + 1, iz),     demAt(ix + 2, iz),     tx);
+  const c2 = catmull(demAt(ix - 1, iz + 1), demAt(ix, iz + 1), demAt(ix + 1, iz + 1), demAt(ix + 2, iz + 1), tx);
+  const c3 = catmull(demAt(ix - 1, iz + 2), demAt(ix, iz + 2), demAt(ix + 1, iz + 2), demAt(ix + 2, iz + 2), tx);
+  return catmull(c0, c1, c2, c3, tz) - baseElev;
 }
 
 // ---- the Prahova: traced along the valley floor of the real DEM ----
