@@ -149,21 +149,16 @@ interface ForestChunk { cx: number; cz: number; full: THREE.InstancedMesh; imp: 
 const forestChunks: ForestChunk[] = [];
 const SHOW_ACT = 600; // keep full detail within this of settlement activity
 
-export function updateForestReveal(camX = Infinity, camZ = Infinity, camDist = 600): void {
-  // balanced rings: full trees fairly near the look-at point, clump impostors out
-  // across the rest of the visible valley. Both scale gently with zoom.
-  const fullR = Math.min(1500, camDist * 0.8 + 450);
-  const impR = Math.min(6000, camDist * 2.2 + 1500);
-  const fullR2 = fullR * fullR, impR2 = impR * impR, actR2 = SHOW_ACT * SHOW_ACT;
+// TEMP (perf debugging): only render full trees within 500 m of the starting
+// camp; impostors are disabled entirely. Camera args are ignored for now. Revert
+// to the zoom-scaled full/impostor rings once the GPU cost is understood.
+const NEAR_START = 500;
+export function updateForestReveal(_camX = Infinity, _camZ = Infinity, _camDist = 600): void {
+  const near2 = NEAR_START * NEAR_START;
   for (const c of forestChunks) {
-    const d2 = (c.cx - camX) ** 2 + (c.cz - camZ) ** 2;
-    let full = d2 < fullR2;
-    if (!full && roadDistance(c.cx, c.cz) < SHOW_ACT) full = true;
-    if (!full) for (const b of G.buildings) { if ((b.x - c.cx) ** 2 + (b.z - c.cz) ** 2 < actR2) { full = true; break; } }
-    if (!full) for (const v of G.villagers) { if ((v.x - c.cx) ** 2 + (v.z - c.cz) ** 2 < actR2) { full = true; break; } }
-    const imp = !full && d2 < impR2; // clump impostor fills the mid band only
+    const full = (c.cx - START.camp.x) ** 2 + (c.cz - START.camp.z) ** 2 < near2;
     if (c.full.visible !== full) c.full.visible = full;
-    if (c.imp && c.imp.visible !== imp) c.imp.visible = imp;
+    if (c.imp && c.imp.visible) c.imp.visible = false;
   }
 }
 
