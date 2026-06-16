@@ -139,27 +139,31 @@ let clearingPolys: { x: number; z: number }[][] = []; // CLEARING_POLYS resolved
 // unit). A chunk renders only within a generous radius of the camera's look-at
 // point or settlement activity; beyond that the baked dark forest-floor tint
 // (paintForestFloor) carries the look cheaply, so the wilderness costs nothing.
-interface ForestChunk { cx: number; cz: number; mesh: THREE.InstancedMesh }
+// Each chunk holds two LODs of the same wood: `full` (every card-tree) and `imp`
+// (a sparse set of larger "clump" cards — ~8 trees binned into one, same art). A
+// chunk shows full trees near the camera or settlement, swaps to the cheap clump
+// impostor across a mid band, and beyond that draws nothing (the baked dark
+// forest-floor tint carries the distance). This keeps a zoomed-out, whole-valley
+// view from rendering tens of thousands of cards.
+interface ForestChunk { cx: number; cz: number; full: THREE.InstancedMesh; imp: THREE.InstancedMesh | null }
 const forestChunks: ForestChunk[] = [];
-const SHOW_ACT = 600; // show chunks within this of settlement activity
+const SHOW_ACT = 600; // keep full detail within this of settlement activity
 
 export function updateForestReveal(camX = Infinity, camZ = Infinity, camDist = 600): void {
-  const showCam = Math.min(3200, camDist * 1.5 + 800); // ring scales with zoom; tint carries beyond
-  const camR2 = showCam * showCam, actR2 = SHOW_ACT * SHOW_ACT;
+  // balanced rings: full trees fairly near the look-at point, clump impostors out
+  // across the rest of the visible valley. Both scale gently with zoom.
+  const fullR = Math.min(1500, camDist * 0.8 + 450);
+  const impR = Math.min(6000, camDist * 2.2 + 1500);
+  const fullR2 = fullR * fullR, impR2 = impR * impR, actR2 = SHOW_ACT * SHOW_ACT;
   for (const c of forestChunks) {
-    let show = (c.cx - camX) ** 2 + (c.cz - camZ) ** 2 < camR2;
-    if (!show) show = roadDistance(c.cx, c.cz) < SHOW_ACT;
-    if (!show) {
-      for (const b of G.buildings) {
-        if ((b.x - c.cx) ** 2 + (b.z - c.cz) ** 2 < actR2) { show = true; break; }
-      }
-    }
-    if (!show) {
-      for (const v of G.villagers) {
-        if ((v.x - c.cx) ** 2 + (v.z - c.cz) ** 2 < actR2) { show = true; break; }
-      }
-    }
-    if (c.mesh.visible !== show) c.mesh.visible = show;
+    const d2 = (c.cx - camX) ** 2 + (c.cz - camZ) ** 2;
+    let full = d2 < fullR2;
+    if (!full && roadDistance(c.cx, c.cz) < SHOW_ACT) full = true;
+    if (!full) for (const b of G.buildings) { if ((b.x - c.cx) ** 2 + (b.z - c.cz) ** 2 < actR2) { full = true; break; } }
+    if (!full) for (const v of G.villagers) { if ((v.x - c.cx) ** 2 + (v.z - c.cz) ** 2 < actR2) { full = true; break; } }
+    const imp = !full && d2 < impR2; // clump impostor fills the mid band only
+    if (c.full.visible !== full) c.full.visible = full;
+    if (c.imp && c.imp.visible !== imp) c.imp.visible = imp;
   }
 }
 
@@ -293,7 +297,7 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const HARVEST_MAX_H = 420;
   const SPACING = 14;   // base canopy spacing (density then varies by clump)
   const CHUNK = 512;
-  let totalTrees = 0;
+  let totalTrees = 0, totalImp = 0;
 
   const chunksX = Math.ceil(MAP.width / CHUNK);
   const chunksZ = Math.ceil(MAP.depth / CHUNK);
@@ -347,11 +351,43 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
       });
       mesh.computeBoundingSphere(); // spread instances → cull on the real footprint
       scene.add(mesh);
-      forestChunks.push({ cx: x0 + CHUNK / 2, cz: z0 + CHUNK / 2, mesh });
+
+      // coarse clump impostor: bin this chunk's trees into ~40 m cells and plant
+      // one larger card per occupied cell (same pine art, denser cells → bigger
+      // clump). Shown in place of the full mesh across the mid-distance band.
+      const CELL = 40;
+      const bins = new Map<number, { sx: number; sz: number; n: number }>();
+      const cols = Math.ceil(CHUNK / CELL);
+      for (const s of spots) {
+        const k = Math.floor((s.z - z0) / CELL) * cols + Math.floor((s.x - x0) / CELL);
+        let b = bins.get(k); if (!b) { b = { sx: 0, sz: 0, n: 0 }; bins.set(k, b); }
+        b.sx += s.x; b.sz += s.z; b.n++;
+      }
+      let imp: THREE.InstancedMesh | null = null;
+      if (bins.size) {
+        imp = new THREE.InstancedMesh(cardGeo, cardMat, bins.size);
+        imp.castShadow = false;
+        imp.raycast = () => {};
+        imp.visible = false;
+        let i = 0;
+        for (const b of bins.values()) {
+          const x = b.sx / b.n, z = b.sz / b.n;
+          dummy.position.set(x, surfaceHeight(x, z), z);
+          dummy.scale.setScalar(1.7 + Math.min(1.1, b.n * 0.12) + crng() * 0.3);
+          dummy.rotation.set(0, crng() * Math.PI * 2, 0);
+          dummy.updateMatrix();
+          imp.setMatrixAt(i++, dummy.matrix);
+        }
+        imp.computeBoundingSphere();
+        scene.add(imp);
+        totalImp += bins.size;
+      }
+
+      forestChunks.push({ cx: x0 + CHUNK / 2, cz: z0 + CHUNK / 2, full: mesh, imp });
       totalTrees += spots.length;
     }
   }
-  console.log(`forest: ${totalTrees} card-trees, ${G.nodes.length} harvestable, ${forestChunks.length} chunks`);
+  console.log(`forest: ${totalTrees} card-trees + ${totalImp} clump impostors, ${G.nodes.length} harvestable, ${forestChunks.length} chunks`);
 
   // --- stone outcrops (real-world locations on the lower slopes) ---
   const rockGeo = new THREE.DodecahedronGeometry(2.4, 0);
