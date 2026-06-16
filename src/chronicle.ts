@@ -120,9 +120,24 @@ export function initChronicle(): void {
   updateBadge();
 }
 
-// re-sync the panel + badge to G.chronicle (used after a save is loaded)
+// re-sync the panel + badge to G.chronicle (used after a save is loaded). Also
+// restores the epilogue clock + HUD year from whichever timeline beats already
+// fired, so a mid-epilogue load keeps its place and year instead of snapping the
+// label back to the era's default.
 export function refreshChronicle(): void {
   unread = 0;
+  epilogueClock = 0;
+  let lastFired: TimelineBeat | null = null;
+  for (const beat of TIMELINE) {
+    if (G.chronicle.includes(beat.id)) {
+      epilogueClock = Math.max(epilogueClock, beat.after);
+      lastFired = beat;
+    }
+  }
+  if (lastFired) {
+    G.year = parseInt(lastFired.yearLabel.replace(/\D/g, ''), 10) || G.year;
+    setEraLabel(lastFired.yearLabel);
+  }
   renderChronicle();
   updateBadge();
 }
