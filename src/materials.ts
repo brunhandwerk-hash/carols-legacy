@@ -394,9 +394,13 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
         'float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);\n' +
         '  float a=h21(i), b=h21(i+vec2(1,0)), c=h21(i+vec2(0,1)), d=h21(i+vec2(1,1));\n' +
         '  return mix(mix(a,b,f.x), mix(c,d,f.x), f.y); }\n' +
-        // de-tile: blend the texture with a second rotated/rescaled sample so the
-        // ~9 m repeat doesn't read as an obvious grid at close range
-        'vec3 detile(sampler2D t, vec2 uv){ vec3 a = texture2D(t, uv).rgb; vec3 b = texture2D(t, uv * -0.41 + vec2(0.37, 0.61)).rgb; return mix(a, b, 0.4); }')
+        // High-pass detail texturing: the source texture has a faint low-frequency
+        // brightness gradient (brighter toward one diagonal corner). Tiled, that
+        // gradient repeats into a regular diagonal grid — the "lines" on flat ground.
+        // Subtract the per-tile low frequency (a blurred sample) and rebase on a flat
+        // tone: keeps the fine grass detail, drops the repeating gradient. No distance
+        // fade, so near ground stays crisp.
+        'vec3 detailTex(sampler2D t, vec2 uv, vec3 base){ return clamp(base + texture2D(t, uv).rgb - textureLod(t, uv, 7.0).rgb, 0.0, 1.0); }')
       .replace('#include <map_fragment>', `
         // Domain-warp the sampling position with noise BEFORE tiling. A rigid
         // world-space tiling (even de-tiled) beats into a regular diagonal moiré
@@ -407,9 +411,9 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
         vec2 warp = (vec2(vnoise(wp), vnoise(wp + 17.3)) - 0.5) * 11.0;
         vec2 guv = (vWPos.xz + warp) * uTile;
         vec4 w = max(vSplat, 0.0); w /= (w.x + w.y + w.z + w.w + 1e-4);
-        vec3 cG = detile(tGrass, guv);
-        vec3 cF = detile(tForest, guv);
-        vec3 cD = detile(tDirt, guv);
+        vec3 cG = detailTex(tGrass, guv, vec3(0.19, 0.25, 0.16));
+        vec3 cF = detailTex(tForest, guv, vec3(0.11, 0.17, 0.09));
+        vec3 cD = detailTex(tDirt, guv, vec3(0.31, 0.25, 0.17));
         vec3 bn = abs(normalize(vWNormal)); bn /= (bn.x + bn.y + bn.z);
         vec3 cR = texture2D(tRock, vWPos.zy * uTile).rgb * bn.x
                 + texture2D(tRock, vWPos.xz * uTile).rgb * bn.y
