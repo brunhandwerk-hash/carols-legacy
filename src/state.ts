@@ -41,6 +41,7 @@ export interface GameState {
   speed: number;      // game-speed multiplier (1 / 2 / 3)
   started: boolean;   // the intro has been dismissed and play has begun
   gameOver: boolean;
+  chronicle: string[]; // ids of historical snippets unlocked so far (see chronicle.ts)
 }
 
 export const G: GameState = {
@@ -59,6 +60,7 @@ export const G: GameState = {
   speed: 1,
   started: false,
   gameOver: false,
+  chronicle: [],
 };
 
 export function canAfford(cost: Partial<Record<ResKind, number>>): boolean {

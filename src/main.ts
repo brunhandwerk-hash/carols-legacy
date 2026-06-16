@@ -21,6 +21,7 @@ import { initWildlife, updateWildlife } from './wildlife';
 import { autoAssign } from './labor';
 import { updatePopulation, setPopulationCallbacks } from './population';
 import { saveGame, loadGame } from './save';
+import { initChronicle, recordChronicle, refreshChronicle } from './chronicle';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -126,6 +127,7 @@ async function boot(): Promise<void> {
 
   setOnBuildingComplete((b: Building) => {
     toast(`${b.def.name} is complete.`);
+    recordChronicle(b.def.key); // landmark completions write a page of the town's history
     refreshObjectives();
     refreshSelectionPanel();
   });
@@ -150,6 +152,7 @@ async function boot(): Promise<void> {
 
   initControls();
   initBuildBar();
+  initChronicle();
   updateHud();
   requestAnimationFrame(frame);
 
@@ -219,6 +222,7 @@ function doLoad(): void {
   updateHud();
   refreshObjectives();
   refreshSelectionPanel();
+  refreshChronicle();
   if (G.buildings.length) rig.jumpTo(G.buildings[0].x - 20, G.buildings[0].z - 30);
   toast('Game loaded.');
 }

@@ -21,6 +21,7 @@ interface SaveData {
   resources: Record<string, number>;
   eraIndex: number; year: number; time: number; speed: number;
   objectives: boolean[];
+  chronicle: string[];
   buildings: SavedBuilding[];
   villagers: SavedVillager[];
 }
@@ -35,6 +36,7 @@ export function saveGame(): boolean {
       resources: { ...G.resources },
       eraIndex: G.eraIndex, year: G.year, time: G.time, speed: G.speed,
       objectives: ERAS[G.eraIndex].objectives.map((o) => o.done),
+      chronicle: [...G.chronicle],
       buildings: G.buildings.map((b) => ({
         key: b.def.key, x: b.x, z: b.z, phase: b.phase,
         plotKey: b.plotKey, rotY: b.group.rotation.y, progress: b.progress,
@@ -75,6 +77,7 @@ export function loadGame(scene: THREE.Scene): boolean {
   G.time = data.time;
   G.speed = data.speed || 1;
   G.gameOver = false;
+  G.chronicle = Array.isArray(data.chronicle) ? [...data.chronicle] : [];
 
   // buildings (popCap re-accrues through each finished building's finish())
   for (const sb of data.buildings) {
