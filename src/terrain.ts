@@ -206,16 +206,87 @@ export function flattenUnder(x: number, z: number, r: number): void {
   for (const i of merged) { const s = flatSpots[i]; zones.push({ x: s.x, z: s.z, r: s.r }); }
   const geo = terrainMesh.geometry as THREE.BufferGeometry;
   const pos = geo.attributes.position as THREE.BufferAttribute;
-  for (let i = 0; i < pos.count; i++) {
-    const vx = pos.getX(i), vz = pos.getZ(i);
-    for (const zn of zones) {
-      const dx = vx - zn.x, dz = vz - zn.z, reach = zn.r * 1.9 + 1;
-      if (dx * dx + dz * dz <= reach * reach) { pos.setY(i, terrainHeight(vx, vz)); break; }
+  // The PlaneGeometry vertex grid is regular, so we only touch the rows/cols
+  // covering the edited zones instead of scanning all ~1M vertices each placement.
+  const gx = MAP.width / TERR_SEG_X, gz = MAP.depth / TERR_SEG_Z;
+  const nx = TERR_SEG_X + 1; // verts per row
+  let minWX = Infinity, minWZ = Infinity, maxWX = -Infinity, maxWZ = -Infinity;
+  for (const zn of zones) {
+    const reach = zn.r * 1.9 + 1;
+    if (zn.x - reach < minWX) minWX = zn.x - reach;
+    if (zn.x + reach > maxWX) maxWX = zn.x + reach;
+    if (zn.z - reach < minWZ) minWZ = zn.z - reach;
+    if (zn.z + reach > maxWZ) maxWZ = zn.z + reach;
+  }
+  const ix0 = Math.max(0, Math.floor((minWX - MAP.minX) / gx));
+  const ix1 = Math.min(TERR_SEG_X, Math.ceil((maxWX - MAP.minX) / gx));
+  const iz0 = Math.max(0, Math.floor((minWZ - MAP.minZ) / gz));
+  const iz1 = Math.min(TERR_SEG_Z, Math.ceil((maxWZ - MAP.minZ) / gz));
+  for (let iz = iz0; iz <= iz1; iz++) {
+    for (let ix = ix0; ix <= ix1; ix++) {
+      const i = iz * nx + ix;
+      const vx = pos.getX(i), vz = pos.getZ(i);
+      for (const zn of zones) {
+        const dx = vx - zn.x, dz = vz - zn.z, reach = zn.r * 1.9 + 1;
+        if (dx * dx + dz * dz <= reach * reach) { pos.setY(i, terrainHeight(vx, vz)); break; }
+      }
     }
   }
   pos.needsUpdate = true;
-  geo.computeVertexNormals();
+  recomputeNormalsRegion(geo, ix0, ix1, iz0, iz1);
   geo.computeBoundingSphere();
+}
+
+// Recompute vertex normals for just the edited window instead of the whole mesh
+// (computeVertexNormals over ~1M verts on every building placement would hitch).
+// The grid is regular: each quad (qx,qz) is two triangles, matching how
+// PlaneGeometry indexes them — (a,b,d) and (b,c,d). We zero+rebuild normals for
+// the ring of vertices whose incident faces moved (one ring around the edited
+// vertices), accumulating from every quad that touches that ring so each rebuilt
+// normal is exact. Vertices outside the ring keep their original normals — no seam.
+function recomputeNormalsRegion(
+  geo: THREE.BufferGeometry, ix0: number, ix1: number, iz0: number, iz1: number,
+): void {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const nrm = geo.attributes.normal as THREE.BufferAttribute;
+  const nx = TERR_SEG_X + 1;
+  // ring of vertices whose normals may have changed (clamped to the grid)
+  const vx0 = Math.max(0, ix0 - 1), vx1 = Math.min(TERR_SEG_X, ix1 + 1);
+  const vz0 = Math.max(0, iz0 - 1), vz1 = Math.min(TERR_SEG_Z, iz1 + 1);
+  const inRing = (ix: number, iz: number) => ix >= vx0 && ix <= vx1 && iz >= vz0 && iz <= vz1;
+  for (let iz = vz0; iz <= vz1; iz++)
+    for (let ix = vx0; ix <= vx1; ix++) { const i = iz * nx + ix; nrm.setXYZ(i, 0, 0, 0); }
+  // every quad touching a ring vertex spans [vx0-1..vx1] × [vz0-1..vz1]
+  const qx0 = Math.max(0, vx0 - 1), qx1 = Math.min(TERR_SEG_X - 1, vx1);
+  const qz0 = Math.max(0, vz0 - 1), qz1 = Math.min(TERR_SEG_Z - 1, vz1);
+  const pA = new THREE.Vector3(), pB = new THREE.Vector3(), pC = new THREE.Vector3();
+  const cb = new THREE.Vector3(), ab = new THREE.Vector3();
+  const accum = (i: number) => {
+    nrm.setXYZ(i, nrm.getX(i) + cb.x, nrm.getY(i) + cb.y, nrm.getZ(i) + cb.z);
+  };
+  const tri = (a: number, b: number, d: number, ai: number, az: number, bi: number, bz: number, di: number, dz: number) => {
+    pA.fromBufferAttribute(pos, a); pB.fromBufferAttribute(pos, b); pC.fromBufferAttribute(pos, d);
+    cb.subVectors(pC, pB); ab.subVectors(pA, pB); cb.cross(ab); // face normal (unnormalized = area-weighted)
+    if (inRing(ai, az)) accum(a);
+    if (inRing(bi, bz)) accum(b);
+    if (inRing(di, dz)) accum(d);
+  };
+  for (let qz = qz0; qz <= qz1; qz++) {
+    for (let qx = qx0; qx <= qx1; qx++) {
+      const a = qx + nx * qz, b = qx + nx * (qz + 1), c = (qx + 1) + nx * (qz + 1), d = (qx + 1) + nx * qz;
+      tri(a, b, d, qx, qz, qx, qz + 1, qx + 1, qz);     // (a,b,d)
+      tri(b, c, d, qx, qz + 1, qx + 1, qz + 1, qx + 1, qz); // (b,c,d)
+    }
+  }
+  const v = new THREE.Vector3();
+  for (let iz = vz0; iz <= vz1; iz++)
+    for (let ix = vx0; ix <= vx1; ix++) {
+      const i = iz * nx + ix;
+      v.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
+      if (v.lengthSq() > 0) v.normalize();
+      nrm.setXYZ(i, v.x, v.y, v.z);
+    }
+  nrm.needsUpdate = true;
 }
 
 function smoothstep(a: number, b: number, t: number): number {
@@ -247,13 +318,17 @@ export function terrainHeight(x: number, z: number): number {
 // so it does NOT match the full-res terrainHeight between those vertices. Things
 // that must sit *on the visible ground* (villagers) use this, which reproduces
 // the mesh's own interpolation — otherwise they sink into concave ground.
-// Rendered terrain grid (≈16 m spacing). Kept coarse for performance: things
-// that must sit *on* the visible ground (trees, buildings, villagers) sample
-// surfaceHeight() — which reconstructs THIS mesh's exact triangle — so they sit
-// flush regardless of how coarse the mesh is. (A finer mesh was tried at
-// 760×880 but cost too much for too little gain once placement used surfaceHeight.)
-export const TERR_SEG_X = 380;
-export const TERR_SEG_Z = 440;
+// Rendered terrain grid. Things that must sit *on* the visible ground (trees,
+// buildings, villagers) sample surfaceHeight() — which reconstructs THIS mesh's
+// exact triangle — so they sit flush regardless of mesh density.
+// Matched to the DEM's native sampling (~6.7 m): the DEM is 932×1078, and
+// terrainHeight() just bilinearly interpolates those samples, so a finer mesh
+// would add vertices with no extra relief. This is the detail ceiling. The mesh
+// is static (built once at boot, never recomputed per frame), so the only cost of
+// the higher vertex count is GPU memory + a slightly longer one-time boot paint;
+// flattenUnder() edits just a local window so building placement stays cheap.
+export const TERR_SEG_X = 928;  // ~6.7 m spacing, matches the DEM
+export const TERR_SEG_Z = 1072;
 
 export function surfaceHeight(x: number, z: number): number {
   const gx = MAP.width / TERR_SEG_X, gz = MAP.depth / TERR_SEG_Z;
