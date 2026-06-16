@@ -368,7 +368,7 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   let flatMat: THREE.MeshStandardMaterial | null = null;
   let wireMat: THREE.MeshBasicMaterial | null = null;
   let coarseTerrain: THREE.Mesh | null = null; // low-res copy shown in wireframe mode
-  let wireOn = false, flatOn = false;
+  let wireOn = false, flatOn = false, terrainOn = true;
   let demPts: THREE.Points | null = null;
   const wireBtn = document.getElementById('dev-wireframe') as HTMLButtonElement;
   const flatBtn = document.getElementById('dev-flat') as HTMLButtonElement;
@@ -404,11 +404,16 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   function applyDebugMats(): void {
     ensureDebugMats();
     const t = terrainMesh(), bk = findMesh('backdrop');
-    // in wireframe mode hide the dense terrain and show the low-res wireframe copy
-    if (t) { t.visible = !wireOn; t.material = flatOn ? flatMat! : origTerrainMat!; }
-    if (coarseTerrain) coarseTerrain.visible = wireOn;
+    // Terrain toggle hides the playable mesh entirely (dense + low-res copy).
+    // Otherwise: wireframe mode shows the low-res copy, normal mode the dense mesh.
+    if (t) { t.visible = terrainOn && !wireOn; t.material = flatOn ? flatMat! : origTerrainMat!; }
+    if (coarseTerrain) coarseTerrain.visible = terrainOn && wireOn;
     if (bk) bk.material = wireOn ? wireMat! : origBackdropMat!;
   }
+  const terrBtn = document.getElementById('dev-terrain') as HTMLButtonElement;
+  terrBtn?.addEventListener('click', () => {
+    terrainOn = !terrainOn; applyDebugMats(); terrBtn.classList.toggle('on', terrainOn);
+  });
   wireBtn?.addEventListener('click', () => {
     wireOn = !wireOn; applyDebugMats(); wireBtn.classList.toggle('on', wireOn);
   });
