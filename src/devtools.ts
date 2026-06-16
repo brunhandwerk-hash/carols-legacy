@@ -357,11 +357,12 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   });
 
   // ---- terrain debug views ----
-  function terrainMesh(): THREE.Mesh | null {
+  function findMesh(name: string): THREE.Mesh | null {
     let t: THREE.Mesh | null = null;
-    world.scene.traverse((o) => { if (o.name === 'terrain') t = o as THREE.Mesh; });
+    world.scene.traverse((o) => { if (o.name === name) t = o as THREE.Mesh; });
     return t;
   }
+  const terrainMesh = (): THREE.Mesh | null => findMesh('terrain');
   let origTerrainMat: THREE.Material | null = null;
   let flatMat: THREE.MeshStandardMaterial | null = null;
   let wireOn = false, flatOn = false;
@@ -370,10 +371,12 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   const flatBtn = document.getElementById('dev-flat') as HTMLButtonElement;
   const demBtn = document.getElementById('dev-dempts') as HTMLButtonElement;
 
-  // keep the wireframe flag applied to whichever material is currently on the mesh
+  // keep the wireframe flag applied to whichever material is currently on the mesh —
+  // terrain AND backdrop, so the surrounding massifs don't stay solid behind it
   function applyWire(): void {
-    const t = terrainMesh(); if (!t) return;
-    (t.material as THREE.Material & { wireframe: boolean }).wireframe = wireOn;
+    for (const t of [terrainMesh(), findMesh('backdrop')]) {
+      if (t) (t.material as THREE.Material & { wireframe: boolean }).wireframe = wireOn;
+    }
   }
   wireBtn?.addEventListener('click', () => {
     wireOn = !wireOn; applyWire(); wireBtn.classList.toggle('on', wireOn);
