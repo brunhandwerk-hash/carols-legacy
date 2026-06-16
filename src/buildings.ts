@@ -1316,8 +1316,7 @@ export const DEFS: Record<string, BuildingDef> = {
     cost: { wood: 60, planks: 10 }, buildPoints: 60, popCap: 0, isDropoff: false, trains: false, radius: 4,
     requires: ['hut', 'lumbercamp'],
     noFoundation: true,
-    model: { url: '/models/kaykit/bridge.gltf.glb', fitRadius: 6 },
-    build: buildBridge,
+    build: buildBridge, // procedural timber crossing (no glTF override)
   },
   // upgrade-only (not in the build toolbar): the cost is the price to rebuild a
   // finished timber Bridge in dressed stone, charged by the panel's upgrade button.
@@ -1332,9 +1331,7 @@ export const DEFS: Record<string, BuildingDef> = {
     key: 'monastery', name: 'Sinaia Monastery', desc: 'Mihail Cantacuzino’s vow — the seed from which a town will grow. Pilgrims’ offerings fill the treasury.',
     cost: { wood: 260, stone: 200, planks: 60, block: 45 }, buildPoints: 420, popCap: 5, isDropoff: true, trains: true, radius: 19,
     coinTrickle: 0.5,
-    // placeholder: the KayKit castle stands in for the monastery until a proper
-    // church/monastery hero model is authored (see R5 follow-up)
-    model: { url: '/models/kaykit/castle.gltf.glb', fitRadius: 16 },
+    // procedural mesh (buildMonastery) — reads better than the KayKit castle stand-in
     build: buildMonastery,
   },
   oldinn: {
