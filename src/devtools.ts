@@ -364,37 +364,38 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   }
   const terrainMesh = (): THREE.Mesh | null => findMesh('terrain');
   let origTerrainMat: THREE.Material | null = null;
+  let origBackdropMat: THREE.Material | null = null;
   let flatMat: THREE.MeshStandardMaterial | null = null;
+  let wireMat: THREE.MeshBasicMaterial | null = null;
   let wireOn = false, flatOn = false;
   let demPts: THREE.Points | null = null;
   const wireBtn = document.getElementById('dev-wireframe') as HTMLButtonElement;
   const flatBtn = document.getElementById('dev-flat') as HTMLButtonElement;
   const demBtn = document.getElementById('dev-dempts') as HTMLButtonElement;
 
-  // keep the wireframe flag applied to whichever material is currently on the mesh —
-  // terrain AND backdrop, so the surrounding massifs don't stay solid behind it
-  function applyWire(): void {
-    for (const t of [terrainMesh(), findMesh('backdrop')]) {
-      if (t) (t.material as THREE.Material & { wireframe: boolean }).wireframe = wireOn;
-    }
+  function ensureDebugMats(): void {
+    const t = terrainMesh(), bk = findMesh('backdrop');
+    if (t && !origTerrainMat) origTerrainMat = t.material as THREE.Material;
+    if (bk && !origBackdropMat) origBackdropMat = bk.material as THREE.Material;
+    // plain matte material: keeps the mesh's (analytic) normals, drops all texture
+    // so Flat shade shows pure geometry shading
+    if (!flatMat) flatMat = new THREE.MeshStandardMaterial({ color: 0x5f7d44, roughness: 1, metalness: 0 });
+    // ONE shared wireframe material for terrain + backdrop, so both wireframes look
+    // identical — plain black, unlit, fog off (distance doesn't tint it)
+    if (!wireMat) wireMat = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, fog: false, toneMapped: false });
+  }
+  // pick the material for each mesh from the current toggle state
+  function applyDebugMats(): void {
+    ensureDebugMats();
+    const t = terrainMesh(), bk = findMesh('backdrop');
+    if (t) t.material = wireOn ? wireMat! : flatOn ? flatMat! : origTerrainMat!;
+    if (bk) bk.material = wireOn ? wireMat! : origBackdropMat!;
   }
   wireBtn?.addEventListener('click', () => {
-    wireOn = !wireOn; applyWire(); wireBtn.classList.toggle('on', wireOn);
+    wireOn = !wireOn; applyDebugMats(); wireBtn.classList.toggle('on', wireOn);
   });
   flatBtn?.addEventListener('click', () => {
-    const t = terrainMesh(); if (!t) return;
-    flatOn = !flatOn;
-    if (flatOn) {
-      if (!origTerrainMat) origTerrainMat = t.material as THREE.Material;
-      // plain matte material: keeps the mesh's (analytic) normals, drops all texture
-      // so you see pure geometry shading — isolates geometry vs. texture artifacts
-      if (!flatMat) flatMat = new THREE.MeshStandardMaterial({ color: 0x5f7d44, roughness: 1, metalness: 0 });
-      t.material = flatMat;
-    } else if (origTerrainMat) {
-      t.material = origTerrainMat;
-    }
-    applyWire();
-    flatBtn.classList.toggle('on', flatOn);
+    flatOn = !flatOn; applyDebugMats(); flatBtn.classList.toggle('on', flatOn);
   });
   demBtn?.addEventListener('click', () => {
     if (!demPts) { demPts = buildDemPointsMesh(); world.scene.add(demPts); }
