@@ -295,6 +295,13 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   // terrain on steep slopes, letting the dark shadowed terrain bleed through as
   // black patches.) depthTest stays on so the map self-occludes correctly at
   // oblique angles; the small `lift` + polygonOffset keep it just above the ground.
+  // Calibration: the Esri imagery is georeferenced slightly off from the terrain.
+  // Measured from two dev pins — a valley feature shows on the imagery at world
+  // (1754.5, -462.6) but belongs at (1650, -593) — so the imagery must shift by
+  // (target - source) metres. Applied as a UV slide so the drape still hugs the
+  // terrain heights; only the sampled texel moves. (+x east, +z south.)
+  const SAT_SHIFT_X = -104.5; // ~104 m west
+  const SAT_SHIFT_Z = -130.4; // ~130 m north
   function buildSatellite(): void {
     const NX = TERR_SEG_X, NZ = TERR_SEG_Z;
     const lift = 3.0;
@@ -310,7 +317,9 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
         const x = MAP.minX + fx * MAP.width;
         const p = (j * cols + i) * 3, u = (j * cols + i) * 2;
         pos[p] = x; pos[p + 1] = surfaceHeight(x, z) + lift; pos[p + 2] = z;
-        uv[u] = fx; uv[u + 1] = 1 - fz;
+        // sample the texel that "belongs" here: the vertex's position minus the shift
+        uv[u] = fx - SAT_SHIFT_X / MAP.width;
+        uv[u + 1] = (1 - fz) + SAT_SHIFT_Z / MAP.depth;
       }
     }
     let t = 0;
