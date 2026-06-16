@@ -13,17 +13,53 @@ interface DemMeta {
   minElev: number; maxElev: number;
 }
 
-let dem: Int16Array;
+let dem: Float32Array;
 let meta: DemMeta;
 let baseElev = 0;
 
 export const TREELINE = 1005;  // ~1750m a.s.l. relative to base
 export const SNOWLINE = 1115;  // ~1860m a.s.l.
 
+// Separable binomial blur ([1,4,6,4,1]/16, ≈1 px sigma) with clamped edges —
+// dissolves the DEM's integer-metre quantization into smooth, continuous heights.
+function smoothDem(src: Int16Array, w: number, h: number): Float32Array {
+  const k = [1, 4, 6, 4, 1], r = 2, inv = 1 / 16;
+  const tmp = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let s = 0;
+      for (let t = -r; t <= r; t++) {
+        let xx = x + t; xx = xx < 0 ? 0 : xx >= w ? w - 1 : xx;
+        s += src[row + xx] * k[t + r];
+      }
+      tmp[row + x] = s * inv;
+    }
+  }
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let s = 0;
+      for (let t = -r; t <= r; t++) {
+        let yy = y + t; yy = yy < 0 ? 0 : yy >= h ? h - 1 : yy;
+        s += tmp[yy * w + x] * k[t + r];
+      }
+      out[y * w + x] = s * inv;
+    }
+  }
+  return out;
+}
+
 export async function loadDem(): Promise<void> {
   const [metaRes, binRes] = await Promise.all([fetch('/dem.json'), fetch('/dem.bin')]);
   meta = await metaRes.json();
-  dem = new Int16Array(await binRes.arrayBuffer());
+  // The DEM is stored as integer metres, so ~18% of neighbouring samples are
+  // identical — a 1 m quantization staircase that bicubic can't dissolve (the
+  // control points sit on the steps) and that the shading badly amplifies, since
+  // normals are the derivative of height. A light separable blur (≈1 px sigma)
+  // dissolves the steps into continuous slopes while barely touching the real
+  // ~7 m-resolution features. Done once at load.
+  dem = smoothDem(new Int16Array(await binRes.arrayBuffer()), meta.w, meta.h);
   baseElev = meta.minElev;
   MAP.width = meta.widthM;
   MAP.depth = meta.depthM;
