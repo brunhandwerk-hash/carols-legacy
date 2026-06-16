@@ -14,6 +14,7 @@ interface DemMeta {
 }
 
 let dem: Float32Array;
+let demRaw: Int16Array | null = null; // unsmoothed source samples, kept for the DEM-points debug view
 let meta: DemMeta;
 let baseElev = 0;
 
@@ -66,7 +67,8 @@ export async function loadDem(): Promise<void> {
   // normals are the derivative of height. A light separable blur (≈1 px sigma)
   // dissolves the steps into continuous slopes while barely touching the real
   // ~7 m-resolution features. Done once at load.
-  dem = smoothDem(new Int16Array(await binRes.arrayBuffer()), meta.w, meta.h);
+  demRaw = new Int16Array(await binRes.arrayBuffer());
+  dem = smoothDem(demRaw, meta.w, meta.h);
   baseElev = meta.minElev;
   MAP.width = meta.widthM;
   MAP.depth = meta.depthM;
@@ -461,10 +463,57 @@ export function roadDistance(x: number, z: number): number {
   return best;
 }
 
+// ---- debug views (dev menu) ----
+// Raw DEM samples as a point cloud — the SOURCE data at its native grid, before
+// any smoothing/bicubic interpolation. Lets you compare the source against the
+// rendered mesh (e.g. the integer-metre quantization staircase shows here).
+export function buildDemPointsMesh(): THREE.Points {
+  const src = demRaw, w = meta.w, h = meta.h;
+  const pos = new Float32Array(w * h * 3);
+  let n = 0;
+  for (let iz = 0; iz < h; iz++) for (let ix = 0; ix < w; ix++) {
+    const x = MAP.minX + (ix / (w - 1)) * MAP.width;
+    const z = MAP.minZ + (iz / (h - 1)) * MAP.depth;
+    const y = (src ? src[iz * w + ix] : dem[iz * w + ix]) - baseElev;
+    pos[n * 3] = x; pos[n * 3 + 1] = y + 0.3; pos[n * 3 + 2] = z; n++;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xffd27a, size: 1.4, sizeAttenuation: true, toneMapped: false });
+  const pts = new THREE.Points(geo, mat);
+  pts.name = 'demPoints';
+  return pts;
+}
+
 // ---- meshes ----
 export function buildTerrainMesh(): THREE.Mesh {
   const geo = new THREE.PlaneGeometry(MAP.width, MAP.depth, TERR_SEG_X, TERR_SEG_Z);
   geo.rotateX(-Math.PI / 2);
+  // Re-triangulate with an ALTERNATING (herringbone) diagonal instead of
+  // PlaneGeometry's uniform one. A single shared diagonal across every quad makes
+  // the whole grid's facets line up, so at grazing angles the shading/AO traces a
+  // regular diagonal "corduroy" across flat ground (visible even untextured, and
+  // amplified by the texture). Flipping the diagonal on every other quad cancels
+  // that bias — same vertices, same winding (verified), so normals/culling are
+  // unaffected. This is the geometric root fix; the analytic normals only handled
+  // the normal-averaging half.
+  {
+    const nx = TERR_SEG_X + 1;
+    const idx = new Uint32Array(TERR_SEG_X * TERR_SEG_Z * 6);
+    let t = 0;
+    for (let iz = 0; iz < TERR_SEG_Z; iz++) {
+      for (let ix = 0; ix < TERR_SEG_X; ix++) {
+        const a = ix + nx * iz, b = ix + nx * (iz + 1), cc = (ix + 1) + nx * (iz + 1), d = (ix + 1) + nx * iz;
+        if (((ix + iz) & 1) === 0) { // PlaneGeometry's default diagonal (b–d)
+          idx[t] = a; idx[t + 1] = b; idx[t + 2] = d; idx[t + 3] = b; idx[t + 4] = cc; idx[t + 5] = d;
+        } else {                     // flipped diagonal (a–c), same winding
+          idx[t] = a; idx[t + 1] = b; idx[t + 2] = cc; idx[t + 3] = a; idx[t + 4] = cc; idx[t + 5] = d;
+        }
+        t += 6;
+      }
+    }
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  }
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
   const splat = new Float32Array(pos.count * 4); // [grass, forest, dirt, rock] blend weights

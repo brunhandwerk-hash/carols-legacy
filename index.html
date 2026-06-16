@@ -269,12 +269,13 @@
       font-size: 11px; letter-spacing: 1.5px; font-variant: small-caps; color: var(--accent);
       opacity: 0.85; margin-bottom: 7px; font-weight: normal;
     }
-    #dev-sat-toggle {
+    #dev-sat-toggle, .dev-tbtn {
       background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge); border-radius: 4px;
       padding: 5px 10px; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
     }
-    #dev-sat-toggle:hover { background: #51422d; }
-    #dev-sat-toggle.on { background: var(--accent); color: #2a2113; border-color: var(--accent); font-weight: bold; }
+    #dev-sat-toggle:hover, .dev-tbtn:hover { background: #51422d; }
+    #dev-sat-toggle.on, .dev-tbtn.on { background: var(--accent); color: #2a2113; border-color: var(--accent); font-weight: bold; }
+    #dev-terrain-dbg { display: flex; flex-wrap: wrap; gap: 6px; }
     #devtools .dev-key {
       font-family: monospace; font-size: 11px; background: rgba(0,0,0,0.4); border: 1px solid var(--panel-edge);
       border-radius: 3px; padding: 0 5px; margin-left: 4px; opacity: 0.7;
@@ -428,6 +429,15 @@
         <div class="dev-sat">
           <button id="dev-sat-toggle" title="Toggle the satellite reference overlay">🛰 Satellite</button>
           <input type="range" id="dev-sat-op" min="0.2" max="1" step="0.05" value="0.9" title="Satellite overlay opacity">
+        </div>
+      </div>
+
+      <div class="dev-section">
+        <h4>Terrain Debug</h4>
+        <div id="dev-terrain-dbg">
+          <button id="dev-wireframe" class="dev-tbtn" title="Show the terrain mesh triangulation">△ Wireframe</button>
+          <button id="dev-flat" class="dev-tbtn" title="Untextured flat material — see pure geometry shading">◑ Flat shade</button>
+          <button id="dev-dempts" class="dev-tbtn" title="Raw DEM samples as a point cloud (the source data, pre-interpolation)">⠿ DEM points</button>
         </div>
       </div>
 

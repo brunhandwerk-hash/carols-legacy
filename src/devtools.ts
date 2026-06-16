@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MAP } from './config';
-import { surfaceHeight, worldToLonLat, TERR_SEG_X, TERR_SEG_Z } from './terrain';
+import { surfaceHeight, worldToLonLat, TERR_SEG_X, TERR_SEG_Z, buildDemPointsMesh } from './terrain';
 import { toast } from './ui';
 import type { WorldRefs } from './world';
 
@@ -353,6 +353,49 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   satOp.addEventListener('input', () => {
     satOpacity = parseFloat(satOp.value);
     if (satMesh) (satMesh.material as THREE.MeshBasicMaterial).opacity = satOpacity;
+  });
+
+  // ---- terrain debug views ----
+  function terrainMesh(): THREE.Mesh | null {
+    let t: THREE.Mesh | null = null;
+    world.scene.traverse((o) => { if (o.name === 'terrain') t = o as THREE.Mesh; });
+    return t;
+  }
+  let origTerrainMat: THREE.Material | null = null;
+  let flatMat: THREE.MeshStandardMaterial | null = null;
+  let wireOn = false, flatOn = false;
+  let demPts: THREE.Points | null = null;
+  const wireBtn = document.getElementById('dev-wireframe') as HTMLButtonElement;
+  const flatBtn = document.getElementById('dev-flat') as HTMLButtonElement;
+  const demBtn = document.getElementById('dev-dempts') as HTMLButtonElement;
+
+  // keep the wireframe flag applied to whichever material is currently on the mesh
+  function applyWire(): void {
+    const t = terrainMesh(); if (!t) return;
+    (t.material as THREE.Material & { wireframe: boolean }).wireframe = wireOn;
+  }
+  wireBtn?.addEventListener('click', () => {
+    wireOn = !wireOn; applyWire(); wireBtn.classList.toggle('on', wireOn);
+  });
+  flatBtn?.addEventListener('click', () => {
+    const t = terrainMesh(); if (!t) return;
+    flatOn = !flatOn;
+    if (flatOn) {
+      if (!origTerrainMat) origTerrainMat = t.material as THREE.Material;
+      // plain matte material: keeps the mesh's (analytic) normals, drops all texture
+      // so you see pure geometry shading — isolates geometry vs. texture artifacts
+      if (!flatMat) flatMat = new THREE.MeshStandardMaterial({ color: 0x5f7d44, roughness: 1, metalness: 0 });
+      t.material = flatMat;
+    } else if (origTerrainMat) {
+      t.material = origTerrainMat;
+    }
+    applyWire();
+    flatBtn.classList.toggle('on', flatOn);
+  });
+  demBtn?.addEventListener('click', () => {
+    if (!demPts) { demPts = buildDemPointsMesh(); world.scene.add(demPts); }
+    else { demPts.visible = !demPts.visible; }
+    demBtn.classList.toggle('on', demPts.visible);
   });
 
   // ---- pointer interception (capture phase on window pre-empts input.ts) ----
