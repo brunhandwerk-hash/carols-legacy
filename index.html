@@ -249,18 +249,40 @@
     #buildbar .cdot.water, #bb-detail .cdot.water { background: #4d9fd1; }
     #buildbar .cdot.coin, #bb-detail .cdot.coin { background: #e7c64b; border-radius: 50%; }
 
+    #devmenu-btn {
+      top: 84px; left: 116px; cursor: pointer; font-family: inherit; color: var(--ink);
+      font-size: 13.5px; padding: 6px 11px;
+    }
+    #devmenu-btn:hover { background: #51422d; }
+    #devmenu-btn.on { background: var(--accent); color: #2a2113; border-color: var(--accent); }
+
     /* ---- dev annotation tool ---- */
     #devtools {
       display: none; left: 12px; top: 122px; width: 280px; font-size: 13px; z-index: 8;
+      max-height: 78vh; overflow-y: auto;
     }
     #devtools .dev-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
     #devtools .dev-head h3 { color: var(--accent); font-size: 14px; font-variant: small-caps; letter-spacing: 1px; }
+    #devtools .dev-section { border-top: 1px solid rgba(212,168,67,0.2); padding-top: 8px; margin-top: 8px; }
+    #devtools .dev-section:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+    #devtools .dev-section h4 {
+      font-size: 11px; letter-spacing: 1.5px; font-variant: small-caps; color: var(--accent);
+      opacity: 0.85; margin-bottom: 7px; font-weight: normal;
+    }
+    #dev-sat-toggle {
+      background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge); border-radius: 4px;
+      padding: 5px 10px; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+    }
+    #dev-sat-toggle:hover { background: #51422d; }
+    #dev-sat-toggle.on { background: var(--accent); color: #2a2113; border-color: var(--accent); font-weight: bold; }
     #devtools .dev-key {
       font-family: monospace; font-size: 11px; background: rgba(0,0,0,0.4); border: 1px solid var(--panel-edge);
       border-radius: 3px; padding: 0 5px; margin-left: 4px; opacity: 0.7;
     }
     #dev-close { background: none; border: none; color: var(--ink); font-size: 16px; cursor: pointer; opacity: 0.7; line-height: 1; }
     #dev-close:hover { opacity: 1; }
+    #devtools .dev-sat { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; opacity: 0.9; }
+    #devtools .dev-sat input[type=range] { flex: 1; accent-color: var(--accent); }
     #devtools .dev-modes { display: flex; gap: 5px; margin-bottom: 7px; }
     #devtools .dev-modes button {
       flex: 1; background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
@@ -392,26 +414,39 @@
       <ul id="obj-list"></ul>
     </div>
     <button id="chronicle-btn" class="panel" title="Open the Chronicle of Sinaia">📖 Chronicle <span id="chr-badge"></span></button>
+    <button id="devmenu-btn" class="panel" title="Open the dev menu (`)">🛠 Dev</button>
     <div id="chronicle" class="panel">
       <div class="chr-head"><h3>The Chronicle of Sinaia</h3><button id="chr-close" title="Close">✕</button></div>
       <ul id="chr-list"></ul>
     </div>
     <div id="dev-labels"></div>
     <div id="devtools" class="panel">
-      <div class="dev-head"><h3>Map Annotate <span class="dev-key">`</span></h3><button id="dev-close" title="Close">✕</button></div>
-      <div class="dev-modes">
-        <button id="dev-pin" title="Drop a pin (click terrain)">📍 Pin</button>
-        <button id="dev-line" title="Draw a line (click points, double-click/Enter to finish)">／ Line</button>
-        <button id="dev-polygon" title="Draw an area (click points, double-click/Enter to finish)">▱ Area</button>
+      <div class="dev-head"><h3>Dev Menu <span class="dev-key">`</span></h3><button id="dev-close" title="Close">✕</button></div>
+
+      <div class="dev-section">
+        <h4>Map Layers</h4>
+        <div class="dev-sat">
+          <button id="dev-sat-toggle" title="Toggle the satellite reference overlay">🛰 Satellite</button>
+          <input type="range" id="dev-sat-op" min="0.2" max="1" step="0.05" value="0.9" title="Satellite overlay opacity">
+        </div>
       </div>
-      <input id="dev-text" type="text" placeholder="Select an annotation to label it…" disabled>
-      <div class="dev-actions">
-        <button id="dev-finish" style="display:none">Finish shape</button>
-        <button id="dev-export">Copy all</button>
-        <button id="dev-clear" class="danger">Clear</button>
+
+      <div class="dev-section">
+        <h4>Annotate</h4>
+        <div class="dev-modes">
+          <button id="dev-pin" title="Drop a pin (click terrain)">📍 Pin</button>
+          <button id="dev-line" title="Draw a line (click points, double-click/Enter to finish)">／ Line</button>
+          <button id="dev-polygon" title="Draw an area (click points, double-click/Enter to finish)">▱ Area</button>
+        </div>
+        <input id="dev-text" type="text" placeholder="Select an annotation to label it…" disabled>
+        <div class="dev-actions">
+          <button id="dev-finish" style="display:none">Finish shape</button>
+          <button id="dev-export">Copy all</button>
+          <button id="dev-clear" class="danger">Clear</button>
+        </div>
+        <div id="dev-list"></div>
+        <div class="dev-hint">Pick a mode, click the map. Lines/areas: click points, then Finish (or double-click / Enter). Click an item to edit its note.</div>
       </div>
-      <div id="dev-list"></div>
-      <div class="dev-hint">Pick a mode, click the map. Lines/areas: click points, then Finish (or double-click / Enter). Click an item to edit its note.</div>
     </div>
     <div id="selpanel" class="panel">
       <h3 id="sel-name"></h3>

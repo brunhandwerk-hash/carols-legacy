@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MAP } from './config';
 import { surfaceHeight, worldToLonLat } from './terrain';
 import { toast } from './ui';
 import type { WorldRefs } from './world';
@@ -242,12 +243,15 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     });
   }
 
+  const menuBtn = document.getElementById('devmenu-btn') as HTMLButtonElement;
   function togglePanel(force?: boolean): void {
     const open = force ?? panel.style.display !== 'block';
     panel.style.display = open ? 'block' : 'none';
     labelBox.style.display = open ? 'block' : 'none';
+    menuBtn.classList.toggle('on', open);
     if (!open) setMode('off');
   }
+  menuBtn.addEventListener('click', () => togglePanel());
 
   // wire panel controls
   (['pin', 'line', 'polygon'] as Mode[]).forEach((m) => {
@@ -273,6 +277,56 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     notes = []; selectedId = null; save(); rebuildGizmos(); renderList();
   });
   document.getElementById('dev-close')!.addEventListener('click', () => togglePanel(false));
+
+  // ---- satellite reference overlay (real imagery draped over the terrain) ----
+  let satMesh: THREE.Mesh | null = null;
+  let satOpacity = 0.9;
+  const satBtn = document.getElementById('dev-sat-toggle') as HTMLButtonElement;
+  const satOp = document.getElementById('dev-sat-op') as HTMLInputElement;
+
+  // build a draped grid over the whole map and texture it with /satellite.jpg.
+  // UVs map world fraction -> image (image top row = north), so it lines up with
+  // the terrain (DEM cropped to the same bbox). Built once, on first enable.
+  function buildSatellite(): void {
+    const NX = 120, NZ = 138;
+    const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+    for (let j = 0; j <= NZ; j++) {
+      const fz = j / NZ;
+      const z = MAP.minZ + fz * MAP.depth;
+      for (let i = 0; i <= NX; i++) {
+        const fx = i / NX;
+        const x = MAP.minX + fx * MAP.width;
+        pos.push(x, surfaceHeight(x, z) + 2.0, z);
+        uv.push(fx, 1 - fz);
+      }
+    }
+    for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
+      const a = j * (NX + 1) + i, b = a + 1, c = a + (NX + 1), d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    const tex = new THREE.TextureLoader().load('/satellite.jpg');
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: satOpacity, side: THREE.DoubleSide, depthWrite: false });
+    m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -2;
+    satMesh = new THREE.Mesh(geo, m);
+    satMesh.renderOrder = 4;
+    world.scene.add(satMesh);
+  }
+
+  function setSatellite(on: boolean): void {
+    if (on && !satMesh) buildSatellite();
+    if (satMesh) satMesh.visible = on;
+    satBtn.classList.toggle('on', on);
+  }
+  satBtn.addEventListener('click', () => setSatellite(!(satMesh?.visible)));
+  satOp.addEventListener('input', () => {
+    satOpacity = parseFloat(satOp.value);
+    if (satMesh) (satMesh.material as THREE.MeshBasicMaterial).opacity = satOpacity;
+  });
 
   // ---- pointer interception (capture phase on window pre-empts input.ts) ----
   let down: { x: number; y: number } | null = null;
