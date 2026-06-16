@@ -367,6 +367,7 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   let origBackdropMat: THREE.Material | null = null;
   let flatMat: THREE.MeshStandardMaterial | null = null;
   let wireMat: THREE.MeshBasicMaterial | null = null;
+  let coarseTerrain: THREE.Mesh | null = null; // low-res copy shown in wireframe mode
   let wireOn = false, flatOn = false;
   let demPts: THREE.Points | null = null;
   const wireBtn = document.getElementById('dev-wireframe') as HTMLButtonElement;
@@ -383,12 +384,29 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     // ONE shared wireframe material for terrain + backdrop, so both wireframes look
     // identical — plain black, unlit, fog off (distance doesn't tint it)
     if (!wireMat) wireMat = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, fog: false, toneMapped: false });
+    // The real terrain is ~2M triangles — its wireframe reads as a solid fill. Build
+    // a LOW-RES copy of the same surface (~1/7 res, ~48 m cells) to wireframe instead,
+    // so the playable mesh is actually legible. Sampled from surfaceHeight so it
+    // follows the rendered ground.
+    if (!coarseTerrain) {
+      const SX = Math.round(TERR_SEG_X / 7), SZ = Math.round(TERR_SEG_Z / 7);
+      const geo = new THREE.PlaneGeometry(MAP.width, MAP.depth, SX, SZ);
+      geo.rotateX(-Math.PI / 2);
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < pos.count; i++) pos.setY(i, surfaceHeight(pos.getX(i), pos.getZ(i)));
+      coarseTerrain = new THREE.Mesh(geo, wireMat);
+      coarseTerrain.name = 'coarseTerrain';
+      coarseTerrain.visible = false;
+      world.scene.add(coarseTerrain);
+    }
   }
-  // pick the material for each mesh from the current toggle state
+  // pick the material/visibility for each mesh from the current toggle state
   function applyDebugMats(): void {
     ensureDebugMats();
     const t = terrainMesh(), bk = findMesh('backdrop');
-    if (t) t.material = wireOn ? wireMat! : flatOn ? flatMat! : origTerrainMat!;
+    // in wireframe mode hide the dense terrain and show the low-res wireframe copy
+    if (t) { t.visible = !wireOn; t.material = flatOn ? flatMat! : origTerrainMat!; }
+    if (coarseTerrain) coarseTerrain.visible = wireOn;
     if (bk) bk.material = wireOn ? wireMat! : origBackdropMat!;
   }
   wireBtn?.addEventListener('click', () => {
