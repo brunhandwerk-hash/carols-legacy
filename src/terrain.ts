@@ -20,34 +20,41 @@ let baseElev = 0;
 export const TREELINE = 1005;  // ~1750m a.s.l. relative to base
 export const SNOWLINE = 1115;  // ~1860m a.s.l.
 
-// Separable binomial blur ([1,4,6,4,1]/16, ≈1 px sigma) with clamped edges —
-// dissolves the DEM's integer-metre quantization into smooth, continuous heights.
-function smoothDem(src: Int16Array, w: number, h: number): Float32Array {
+// Separable binomial blur ([1,4,6,4,1]/16) with clamped edges, run `passes` times
+// (each pass ≈1 px sigma; N passes ≈ √N px) — dissolves the DEM's integer-metre
+// quantization staircase into smooth, continuous heights. The source's real detail
+// lives at ~7 m (1 px) so a couple of passes clean the 1 m steps with little cost
+// to genuine features.
+function smoothDem(src: Int16Array, w: number, h: number, passes = 3): Float32Array {
   const k = [1, 4, 6, 4, 1], r = 2, inv = 1 / 16;
+  let buf = Float32Array.from(src);
   const tmp = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) {
-    const row = y * w;
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let t = -r; t <= r; t++) {
-        let xx = x + t; xx = xx < 0 ? 0 : xx >= w ? w - 1 : xx;
-        s += src[row + xx] * k[t + r];
-      }
-      tmp[row + x] = s * inv;
-    }
-  }
   const out = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let t = -r; t <= r; t++) {
-        let yy = y + t; yy = yy < 0 ? 0 : yy >= h ? h - 1 : yy;
-        s += tmp[yy * w + x] * k[t + r];
+  for (let p = 0; p < passes; p++) {
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let t = -r; t <= r; t++) {
+          let xx = x + t; xx = xx < 0 ? 0 : xx >= w ? w - 1 : xx;
+          s += buf[row + xx] * k[t + r];
+        }
+        tmp[row + x] = s * inv;
       }
-      out[y * w + x] = s * inv;
     }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let t = -r; t <= r; t++) {
+          let yy = y + t; yy = yy < 0 ? 0 : yy >= h ? h - 1 : yy;
+          s += tmp[yy * w + x] * k[t + r];
+        }
+        out[y * w + x] = s * inv;
+      }
+    }
+    buf = out.slice();
   }
-  return out;
+  return buf;
 }
 
 export async function loadDem(): Promise<void> {
