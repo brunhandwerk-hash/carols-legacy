@@ -295,14 +295,15 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   // terrain on steep slopes, letting the dark shadowed terrain bleed through as
   // black patches.) depthTest stays on so the map self-occludes correctly at
   // oblique angles; the small `lift` + polygonOffset keep it just above the ground.
-  // Calibration: the Esri imagery is georeferenced slightly off from the terrain.
-  // Measured by eye from dev pins (a feature's apparent vs. true world position);
-  // the imagery is slid by (true - apparent) metres. Applied as a UV slide so the
-  // drape still hugs the terrain heights; only the sampled texel moves.
-  // (+x east, +z south.) Refined across two passes: (-104.5,-130.4) then a further
-  // (+60.6,-292) to move pin "1" onto pin "2".
-  const SAT_SHIFT_X = -43.9;  // ~44 m west
-  const SAT_SHIFT_Z = -422.4; // ~422 m north
+  // Calibration: imagery -> terrain. The Esri tile was exported with a pixel size
+  // chosen from the map's *metres* aspect, but its bbox is in *degrees*, so the
+  // tile is stretched ~cos(lat) in the N-S axis. The fix is therefore a per-axis
+  // SCALE + offset, not a pure translation: the texel that belongs at a drape
+  // vertex world position V is sampled from native position N = scale*V + off.
+  // Solved from dev-pin correspondences (z-scale ~0.683 ≈ cos 45.35° = 0.703,
+  // confirming the cause). Applied as a UV remap so the drape still hugs terrain.
+  const SAT_SCALE_X = 0.935074, SAT_OFF_X = -58.605;
+  const SAT_SCALE_Z = 0.683278, SAT_OFF_Z = -21.296;
   function buildSatellite(): void {
     const NX = TERR_SEG_X, NZ = TERR_SEG_Z;
     const lift = 3.0;
@@ -318,9 +319,11 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
         const x = MAP.minX + fx * MAP.width;
         const p = (j * cols + i) * 3, u = (j * cols + i) * 2;
         pos[p] = x; pos[p + 1] = surfaceHeight(x, z) + lift; pos[p + 2] = z;
-        // sample the texel that "belongs" here: the vertex's position minus the shift
-        uv[u] = fx - SAT_SHIFT_X / MAP.width;
-        uv[u + 1] = (1 - fz) + SAT_SHIFT_Z / MAP.depth;
+        // sample the texel that "belongs" here: native pos N = scale*V + off
+        const nx = SAT_SCALE_X * x + SAT_OFF_X;
+        const nz = SAT_SCALE_Z * z + SAT_OFF_Z;
+        uv[u] = (nx - MAP.minX) / MAP.width;
+        uv[u + 1] = 1 - (nz - MAP.minZ) / MAP.depth;
       }
     }
     let t = 0;
