@@ -296,12 +296,13 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   // black patches.) depthTest stays on so the map self-occludes correctly at
   // oblique angles; the small `lift` + polygonOffset keep it just above the ground.
   // Calibration: the Esri imagery is georeferenced slightly off from the terrain.
-  // Measured from two dev pins — a valley feature shows on the imagery at world
-  // (1754.5, -462.6) but belongs at (1650, -593) — so the imagery must shift by
-  // (target - source) metres. Applied as a UV slide so the drape still hugs the
-  // terrain heights; only the sampled texel moves. (+x east, +z south.)
-  const SAT_SHIFT_X = -104.5; // ~104 m west
-  const SAT_SHIFT_Z = -130.4; // ~130 m north
+  // Measured by eye from dev pins (a feature's apparent vs. true world position);
+  // the imagery is slid by (true - apparent) metres. Applied as a UV slide so the
+  // drape still hugs the terrain heights; only the sampled texel moves.
+  // (+x east, +z south.) Refined across two passes: (-104.5,-130.4) then a further
+  // (+60.6,-292) to move pin "1" onto pin "2".
+  const SAT_SHIFT_X = -43.9;  // ~44 m west
+  const SAT_SHIFT_Z = -422.4; // ~422 m north
   function buildSatellite(): void {
     const NX = TERR_SEG_X, NZ = TERR_SEG_Z;
     const lift = 3.0;
