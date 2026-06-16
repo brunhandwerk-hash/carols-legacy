@@ -21,7 +21,7 @@ import { initWildlife, updateWildlife } from './wildlife';
 import { autoAssign } from './labor';
 import { updatePopulation, setPopulationCallbacks } from './population';
 import { saveGame, loadGame } from './save';
-import { initChronicle, recordChronicle, refreshChronicle } from './chronicle';
+import { initChronicle, recordChronicle, refreshChronicle, updateChronicle } from './chronicle';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -153,6 +153,7 @@ async function boot(): Promise<void> {
   initControls();
   initBuildBar();
   initChronicle();
+  recordChronicle('founding'); // open the chronicle with the 1690 founding so it's never empty
   updateHud();
   requestAnimationFrame(frame);
 
@@ -288,6 +289,7 @@ function tick(now: number): void {
       updateWildlife(sdt);
       updatePopulation(sdt, spawnVillager);
       updateEras(sdt);
+      updateChronicle(sdt);
     }
     checkGameOver();
     laborTimer += sdt * steps;

@@ -1,5 +1,5 @@
 import { G } from './state';
-import { showBanner } from './ui';
+import { showBanner, setEraLabel } from './ui';
 
 // ---------------------------------------------------------------------------
 // The Chronicle of Sinaia: short historical vignettes that surface as the town
@@ -17,6 +17,11 @@ export interface ChronicleEntry {
 }
 
 export const CHRONICLE: Record<string, ChronicleEntry> = {
+  founding: {
+    year: 'Anno 1690',
+    title: 'A Vow in the Wild Valley',
+    text: 'Between the cliffs of the Bucegi and the wooded Baiu ridge, a handful of shepherds and woodsmen live in scattered huts beside a cold mountain river. Spătar Mihail Cantacuzino, returned from a pilgrimage to Mount Sinai, has vowed to raise a monastery here — and around it, in time, a town that kings will call home.',
+  },
   monastery: {
     year: '15 Aug 1695',
     title: 'The Monastery Is Consecrated',
@@ -57,7 +62,46 @@ export const CHRONICLE: Record<string, ChronicleEntry> = {
     title: 'Peleș Castle Is Inaugurated',
     text: 'After a decade of work the castle of Peleș is inaugurated — grey rusticated stone, carved timber and steep slate spires above terraced Italian gardens. Lit by its own hydro-electric plant, it is among the first castles in the world with electric light. Sinaia is now the summer capital of a kingdom.',
   },
+  wwi: {
+    year: '1916 – 1918',
+    title: 'The Valley Under Occupation',
+    text: 'Romania enters the Great War in August 1916. After bitter fighting at the Predeal pass and the fall of Bucharest, German and Austro-Hungarian troops occupy the Prahova Valley. Peleș is seized and its treasures evacuated; for two long years the King’s town lies behind enemy lines, until liberation comes in November 1918.',
+  },
+  abdication: {
+    year: '30 Dec 1947',
+    title: 'The End of the Kingdom',
+    text: 'Summoned from Sinaia to Bucharest, King Michael I is forced to abdicate; within months the royal domain is nationalised. The castles fall silent and the monarchy that built this town passes into history — but the valley, and its chronicle, endure.',
+  },
 };
+
+// ---------------------------------------------------------------------------
+// Era/year-driven beats. Unlike the landmark entries above, these are not tied
+// to a building the player raises — they advance the town through the events
+// that came after the castle was built. Once Peleș stands (the kingdom is
+// established, 1883) an epilogue clock runs and surfaces the Great War and the
+// fall of the monarchy in turn, nudging the HUD year forward as each fires.
+// ---------------------------------------------------------------------------
+
+interface TimelineBeat { id: string; after: number; yearLabel: string }
+const TIMELINE: TimelineBeat[] = [
+  { id: 'wwi', after: 40, yearLabel: 'Anno 1916' },
+  { id: 'abdication', after: 95, yearLabel: 'Anno 1947' },
+];
+
+let epilogueClock = 0;
+
+export function updateChronicle(dt: number): void {
+  const pelesDone = G.buildings.some((b) => b.def.key === 'peles' && b.phase === 'done');
+  if (!pelesDone) return; // the epilogue only opens once the castle is built
+  epilogueClock += dt;
+  for (const beat of TIMELINE) {
+    if (epilogueClock >= beat.after && !G.chronicle.includes(beat.id)) {
+      G.year = parseInt(beat.yearLabel.replace(/\D/g, ''), 10) || G.year;
+      setEraLabel(beat.yearLabel);
+      recordChronicle(beat.id);
+    }
+  }
+}
 
 let panelEl: HTMLElement | null = null;
 let listEl: HTMLElement | null = null;
