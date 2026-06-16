@@ -54,6 +54,17 @@ export function lonLatToWorld(lon: number, lat: number): { x: number; z: number 
   return { x: MAP.minX + fx * MAP.width, z: MAP.minZ + fz * MAP.depth };
 }
 
+// inverse of lonLatToWorld — map world metres back to geographic coords, so tools
+// can report where on the real Sinaia map a point sits.
+export function worldToLonLat(x: number, z: number): { lon: number; lat: number } {
+  const fx = (x - MAP.minX) / MAP.width;
+  const fz = (z - MAP.minZ) / MAP.depth;
+  return {
+    lon: meta.minLon + fx * (meta.maxLon - meta.minLon),
+    lat: meta.maxLat - fz * (meta.maxLat - meta.minLat),
+  };
+}
+
 // bilinear sample of the DEM, in metres above valley base
 function rawHeight(x: number, z: number): number {
   const fx = ((x - MAP.minX) / MAP.width) * (meta.w - 1);

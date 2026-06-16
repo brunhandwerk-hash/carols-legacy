@@ -23,6 +23,7 @@ import { updatePopulation, setPopulationCallbacks } from './population';
 import { saveGame, loadGame } from './save';
 import { initChronicle, recordChronicle, refreshChronicle, updateChronicle } from './chronicle';
 import { PLOTS, CAMP_GEO, initPlots, plotByKey } from './plots';
+import { initDevtools } from './devtools';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -98,6 +99,7 @@ window.addEventListener('resize', () => {
 });
 
 let rig: CameraRig;
+let devtools: { update: () => void } | null = null;
 
 async function boot(): Promise<void> {
   await loadDem();
@@ -143,6 +145,7 @@ async function boot(): Promise<void> {
   );
 
   rig = initInput(canvas, camera, world); // opens on the hardcoded view (see rig defaults)
+  devtools = initDevtools(canvas, camera, world); // map-annotation tool (toggle with `)
   initMinimap((x, z) => rig.jumpTo(x, z));
   setCameraJump((x, z) => rig.jumpTo(x, z)); // build-bar landmarks fly the camera to their plot
   initIdleCycler();
@@ -316,6 +319,7 @@ function tick(now: number): void {
     updateForestReveal(rig.target.x, rig.target.z, rig.dist);
   }
 
+  devtools?.update(); // reposition annotation labels over the 3D markers
   composer.render();
 }
 

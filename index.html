@@ -249,6 +249,64 @@
     #buildbar .cdot.water, #bb-detail .cdot.water { background: #4d9fd1; }
     #buildbar .cdot.coin, #bb-detail .cdot.coin { background: #e7c64b; border-radius: 50%; }
 
+    /* ---- dev annotation tool ---- */
+    #devtools {
+      display: none; left: 12px; top: 122px; width: 280px; font-size: 13px; z-index: 8;
+    }
+    #devtools .dev-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    #devtools .dev-head h3 { color: var(--accent); font-size: 14px; font-variant: small-caps; letter-spacing: 1px; }
+    #devtools .dev-key {
+      font-family: monospace; font-size: 11px; background: rgba(0,0,0,0.4); border: 1px solid var(--panel-edge);
+      border-radius: 3px; padding: 0 5px; margin-left: 4px; opacity: 0.7;
+    }
+    #dev-close { background: none; border: none; color: var(--ink); font-size: 16px; cursor: pointer; opacity: 0.7; line-height: 1; }
+    #dev-close:hover { opacity: 1; }
+    #devtools .dev-modes { display: flex; gap: 5px; margin-bottom: 7px; }
+    #devtools .dev-modes button {
+      flex: 1; background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
+      border-radius: 4px; padding: 6px 4px; font-family: inherit; font-size: 12px; cursor: pointer;
+    }
+    #devtools .dev-modes button:hover { background: #51422d; }
+    #devtools .dev-modes button.on { background: var(--accent); color: #2a2113; border-color: var(--accent); font-weight: bold; }
+    #dev-text {
+      width: 100%; background: rgba(0,0,0,0.35); color: var(--ink); border: 1px solid var(--panel-edge);
+      border-radius: 4px; padding: 6px 8px; font-family: inherit; font-size: 13px; margin-bottom: 7px;
+    }
+    #dev-text:disabled { opacity: 0.5; }
+    #devtools .dev-actions { display: flex; gap: 5px; margin-bottom: 8px; }
+    #devtools .dev-actions button {
+      flex: 1; background: #3a3023; color: var(--ink); border: 1px solid var(--panel-edge);
+      border-radius: 4px; padding: 5px 4px; font-family: inherit; font-size: 12px; cursor: pointer;
+    }
+    #devtools .dev-actions button:hover { background: #51422d; }
+    #devtools .dev-actions button.danger { border-color: #a6503e; color: #e8b3a4; }
+    #dev-list { max-height: 30vh; overflow-y: auto; margin-bottom: 7px; }
+    #devtools .dev-item {
+      display: flex; align-items: center; gap: 6px; padding: 4px 5px; border-radius: 4px; cursor: pointer;
+      border: 1px solid transparent;
+    }
+    #devtools .dev-item:hover { background: rgba(255,255,255,0.06); }
+    #devtools .dev-item.sel { border-color: var(--accent); background: rgba(212,168,67,0.12); }
+    #devtools .di-k {
+      flex: 0 0 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 3px;
+      font-size: 11px; font-weight: bold; color: #1a1611;
+    }
+    #devtools .di-k.pin { background: #ffcf3f; }
+    #devtools .di-k.line { background: #4fd0ff; }
+    #devtools .di-k.polygon { background: #8cff6a; }
+    #devtools .di-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #devtools .di-x { background: none; border: none; color: #d8775f; cursor: pointer; font-size: 12px; opacity: 0.7; }
+    #devtools .di-x:hover { opacity: 1; }
+    #devtools .dev-hint { font-size: 10.5px; opacity: 0.55; line-height: 1.4; }
+
+    #dev-labels { display: none; position: absolute; inset: 0; pointer-events: none; z-index: 7; }
+    #dev-labels .dev-label {
+      position: absolute; transform: translate(-50%, -50%); white-space: nowrap;
+      background: rgba(20,16,11,0.82); border: 1px solid var(--accent); border-radius: 4px;
+      padding: 2px 7px; font-size: 12px; color: var(--ink); text-shadow: 0 1px 3px #000;
+    }
+    #dev-labels .dev-label.sel { background: var(--accent); color: #2a2113; font-weight: bold; }
+
     #gameover {
       position: fixed; inset: 0; background: rgba(12, 8, 6, 0.92); z-index: 11;
       display: none; align-items: center; justify-content: center; text-align: center;
@@ -337,6 +395,23 @@
     <div id="chronicle" class="panel">
       <div class="chr-head"><h3>The Chronicle of Sinaia</h3><button id="chr-close" title="Close">✕</button></div>
       <ul id="chr-list"></ul>
+    </div>
+    <div id="dev-labels"></div>
+    <div id="devtools" class="panel">
+      <div class="dev-head"><h3>Map Annotate <span class="dev-key">`</span></h3><button id="dev-close" title="Close">✕</button></div>
+      <div class="dev-modes">
+        <button id="dev-pin" title="Drop a pin (click terrain)">📍 Pin</button>
+        <button id="dev-line" title="Draw a line (click points, double-click/Enter to finish)">／ Line</button>
+        <button id="dev-polygon" title="Draw an area (click points, double-click/Enter to finish)">▱ Area</button>
+      </div>
+      <input id="dev-text" type="text" placeholder="Select an annotation to label it…" disabled>
+      <div class="dev-actions">
+        <button id="dev-finish" style="display:none">Finish shape</button>
+        <button id="dev-export">Copy all</button>
+        <button id="dev-clear" class="danger">Clear</button>
+      </div>
+      <div id="dev-list"></div>
+      <div class="dev-hint">Pick a mode, click the map. Lines/areas: click points, then Finish (or double-click / Enter). Click an item to edit its note.</div>
     </div>
     <div id="selpanel" class="panel">
       <h3 id="sel-name"></h3>
