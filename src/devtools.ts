@@ -324,13 +324,17 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    // GTAO (the post-process AO pass) needs vertex normals — without them it reads
+    // the drape as fully occluded and multiplies it to pure black. Real vertex
+    // normals (mostly up) make it well-behaved under AO.
+    geo.computeVertexNormals();
     const tex = new THREE.TextureLoader().load('/satellite.jpg');
     tex.colorSpace = THREE.SRGBColorSpace;
     // The scene renders into the composer's HDR target, so per-material toneMapped
     // is ignored — OutputPass runs ACES (exposure 0.9) over the whole frame. The
-    // satellite is already dark forest imagery (linear ~0.03–0.05), so ACES crushes
-    // it toward black. Pre-brighten with a >1 linear gain so it survives tone-mapping
-    // and reads like the real photo. (colour multiplies the texture in linear space.)
+    // satellite is already dark forest imagery (linear ~0.03–0.05); a >1 linear gain
+    // lifts it so it reads like the real photo. (colour multiplies the texture in
+    // linear space.)
     const m = new THREE.MeshBasicMaterial({ map: tex, color: 0xffffff, transparent: true, opacity: satOpacity, side: THREE.DoubleSide, depthWrite: false });
     m.color.setScalar(2.2);
     m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -2;
