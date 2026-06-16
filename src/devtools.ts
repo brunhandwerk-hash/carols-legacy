@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MAP } from './config';
-import { surfaceHeight, worldToLonLat } from './terrain';
+import { surfaceHeight, worldToLonLat, TERR_SEG_X, TERR_SEG_Z } from './terrain';
 import { toast } from './ui';
 import type { WorldRefs } from './world';
 
@@ -287,27 +287,43 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   // build a draped grid over the whole map and texture it with /satellite.jpg.
   // UVs map world fraction -> image (image top row = north), so it lines up with
   // the terrain (DEM cropped to the same bbox). Built once, on first enable.
+  //
+  // Grid resolution MATCHES the rendered terrain mesh (TERR_SEG_X/Z) and samples
+  // the same surfaceHeight: the drape's triangles then coincide horizontally with
+  // the terrain's, so it sits a uniform `lift` above the surface everywhere and the
+  // terrain can never poke through. (A coarser grid chord-sags below the fine
+  // terrain on steep slopes, letting the dark shadowed terrain bleed through as
+  // black patches.) depthTest stays on so the map self-occludes correctly at
+  // oblique angles; the small `lift` + polygonOffset keep it just above the ground.
   function buildSatellite(): void {
-    const NX = 120, NZ = 138;
-    const pos: number[] = [], uv: number[] = [], idx: number[] = [];
-    for (let j = 0; j <= NZ; j++) {
+    const NX = TERR_SEG_X, NZ = TERR_SEG_Z;
+    const lift = 3.0;
+    const cols = NX + 1, rows = NZ + 1;
+    const pos = new Float32Array(cols * rows * 3);
+    const uv = new Float32Array(cols * rows * 2);
+    const idx = new Uint32Array(NX * NZ * 6);
+    for (let j = 0; j < rows; j++) {
       const fz = j / NZ;
       const z = MAP.minZ + fz * MAP.depth;
-      for (let i = 0; i <= NX; i++) {
+      for (let i = 0; i < cols; i++) {
         const fx = i / NX;
         const x = MAP.minX + fx * MAP.width;
-        pos.push(x, surfaceHeight(x, z) + 2.0, z);
-        uv.push(fx, 1 - fz);
+        const p = (j * cols + i) * 3, u = (j * cols + i) * 2;
+        pos[p] = x; pos[p + 1] = surfaceHeight(x, z) + lift; pos[p + 2] = z;
+        uv[u] = fx; uv[u + 1] = 1 - fz;
       }
     }
+    let t = 0;
     for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
-      const a = j * (NX + 1) + i, b = a + 1, c = a + (NX + 1), d = c + 1;
-      idx.push(a, c, b, b, c, d);
+      const a = j * cols + i, b = a + 1, c = a + cols, d = c + 1;
+      idx[t] = a; idx[t + 1] = c; idx[t + 2] = b;
+      idx[t + 3] = b; idx[t + 4] = c; idx[t + 5] = d;
+      t += 6;
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    geo.setIndex(idx);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
     const tex = new THREE.TextureLoader().load('/satellite.jpg');
     tex.colorSpace = THREE.SRGBColorSpace;
     // The scene renders into the composer's HDR target, so per-material toneMapped
