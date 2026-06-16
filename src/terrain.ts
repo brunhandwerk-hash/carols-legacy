@@ -306,53 +306,27 @@ export function flattenUnder(x: number, z: number, r: number): void {
 }
 
 // Recompute vertex normals for just the edited window instead of the whole mesh
-// (computeVertexNormals over ~1M verts on every building placement would hitch).
-// The grid is regular: each quad (qx,qz) is two triangles, matching how
-// PlaneGeometry indexes them — (a,b,d) and (b,c,d). We zero+rebuild normals for
-// the ring of vertices whose incident faces moved (one ring around the edited
-// vertices), accumulating from every quad that touches that ring so each rebuilt
-// normal is exact. Vertices outside the ring keep their original normals — no seam.
+// (re-normalling ~1M verts on every building placement would hitch). Uses the same
+// analytic height-gradient normals as buildTerrainMesh (triangulation-independent,
+// so building terraces match the surrounding ground with no seam and no diagonal
+// "corduroy"). Only the ring of vertices around the edited window can have changed.
 function recomputeNormalsRegion(
   geo: THREE.BufferGeometry, ix0: number, ix1: number, iz0: number, iz1: number,
 ): void {
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const nrm = geo.attributes.normal as THREE.BufferAttribute;
   const nx = TERR_SEG_X + 1;
-  // ring of vertices whose normals may have changed (clamped to the grid)
+  const gxS = MAP.width / TERR_SEG_X, gzS = MAP.depth / TERR_SEG_Z;
   const vx0 = Math.max(0, ix0 - 1), vx1 = Math.min(TERR_SEG_X, ix1 + 1);
   const vz0 = Math.max(0, iz0 - 1), vz1 = Math.min(TERR_SEG_Z, iz1 + 1);
-  const inRing = (ix: number, iz: number) => ix >= vx0 && ix <= vx1 && iz >= vz0 && iz <= vz1;
-  for (let iz = vz0; iz <= vz1; iz++)
-    for (let ix = vx0; ix <= vx1; ix++) { const i = iz * nx + ix; nrm.setXYZ(i, 0, 0, 0); }
-  // every quad touching a ring vertex spans [vx0-1..vx1] × [vz0-1..vz1]
-  const qx0 = Math.max(0, vx0 - 1), qx1 = Math.min(TERR_SEG_X - 1, vx1);
-  const qz0 = Math.max(0, vz0 - 1), qz1 = Math.min(TERR_SEG_Z - 1, vz1);
-  const pA = new THREE.Vector3(), pB = new THREE.Vector3(), pC = new THREE.Vector3();
-  const cb = new THREE.Vector3(), ab = new THREE.Vector3();
-  const accum = (i: number) => {
-    nrm.setXYZ(i, nrm.getX(i) + cb.x, nrm.getY(i) + cb.y, nrm.getZ(i) + cb.z);
-  };
-  const tri = (a: number, b: number, d: number, ai: number, az: number, bi: number, bz: number, di: number, dz: number) => {
-    pA.fromBufferAttribute(pos, a); pB.fromBufferAttribute(pos, b); pC.fromBufferAttribute(pos, d);
-    cb.subVectors(pC, pB); ab.subVectors(pA, pB); cb.cross(ab); // face normal (unnormalized = area-weighted)
-    if (inRing(ai, az)) accum(a);
-    if (inRing(bi, bz)) accum(b);
-    if (inRing(di, dz)) accum(d);
-  };
-  for (let qz = qz0; qz <= qz1; qz++) {
-    for (let qx = qx0; qx <= qx1; qx++) {
-      const a = qx + nx * qz, b = qx + nx * (qz + 1), c = (qx + 1) + nx * (qz + 1), d = (qx + 1) + nx * qz;
-      tri(a, b, d, qx, qz, qx, qz + 1, qx + 1, qz);     // (a,b,d)
-      tri(b, c, d, qx, qz + 1, qx + 1, qz + 1, qx + 1, qz); // (b,c,d)
-    }
-  }
-  const v = new THREE.Vector3();
   for (let iz = vz0; iz <= vz1; iz++)
     for (let ix = vx0; ix <= vx1; ix++) {
       const i = iz * nx + ix;
-      v.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
-      if (v.lengthSq() > 0) v.normalize();
-      nrm.setXYZ(i, v.x, v.y, v.z);
+      const x = pos.getX(i), z = pos.getZ(i);
+      const nxv = (terrainHeight(x - gxS, z) - terrainHeight(x + gxS, z)) / (2 * gxS);
+      const nzv = (terrainHeight(x, z - gzS) - terrainHeight(x, z + gzS)) / (2 * gzS);
+      const inv = 1 / Math.hypot(nxv, 1, nzv);
+      nrm.setXYZ(i, nxv * inv, inv, nzv * inv);
     }
   nrm.needsUpdate = true;
 }
@@ -536,7 +510,23 @@ export function buildTerrainMesh(): THREE.Mesh {
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 4));
   geo.setAttribute('aRiver', new THREE.BufferAttribute(river, 1));
-  geo.computeVertexNormals();
+  // Analytic normals from the height gradient — NOT computeVertexNormals(). The
+  // mesh is a uniform grid whose quads all split along the SAME diagonal, so
+  // face-averaged normals carry a 45° directional bias that reads as regular
+  // parallel diagonal shading lines ("corduroy") on smooth slopes — an artifact,
+  // not terrain (it has no morphological sense, runs diagonal to the valley, and
+  // got more visible once de-terracing removed the height noise masking it).
+  // Sampling the terrainHeight gradient is independent of how the quads are split.
+  const gxS = MAP.width / TERR_SEG_X, gzS = MAP.depth / TERR_SEG_Z;
+  const nrm = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    const nxv = (terrainHeight(x - gxS, z) - terrainHeight(x + gxS, z)) / (2 * gxS);
+    const nzv = (terrainHeight(x, z - gzS) - terrainHeight(x, z + gzS)) / (2 * gzS);
+    const inv = 1 / Math.hypot(nxv, 1, nzv);
+    nrm[i * 3] = nxv * inv; nrm[i * 3 + 1] = inv; nrm[i * 3 + 2] = nzv * inv;
+  }
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   // image-based PBR ground: real grass/forest/dirt/rock textures splat-blended by
   // the aSplat weights, with the vertex colours surviving as a light tint.
   const mat = terrainGroundMaterial();
