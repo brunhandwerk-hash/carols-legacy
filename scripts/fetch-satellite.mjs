@@ -8,12 +8,17 @@
 import { writeFileSync, readFileSync } from 'node:fs';
 
 const meta = JSON.parse(readFileSync('public/dem.json', 'utf8'));
-const { minLon, minLat, maxLon, maxLat, widthM, depthM } = meta;
+const { minLon, minLat, maxLon, maxLat } = meta;
 
 // plate-carrée (EPSG:4326) export: rows linear in latitude, matching how the
 // game maps lat -> world z, so UVs align corner-to-corner with the terrain.
+// CRITICAL: the image size aspect must match the bbox aspect *in degrees*. If it
+// doesn't, the Esri export silently EXPANDS the bbox to fit the image aspect, so
+// the returned tile covers a different area than requested and the overlay ends
+// up scaled (~cos(lat)) off the terrain. Sizing by the degree aspect (not the
+// metres aspect) makes the tile cover exactly the bbox — no calibration needed.
 const W = 1500;
-const H = Math.round(W * (depthM / widthM)); // keep ground pixels ~square
+const H = Math.round(W * ((maxLat - minLat) / (maxLon - minLon)));
 const url = 'https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?'
   + new URLSearchParams({
     bbox: `${minLon},${minLat},${maxLon},${maxLat}`,
