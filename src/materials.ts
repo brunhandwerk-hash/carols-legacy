@@ -353,6 +353,10 @@ export function earthMaterial(base = 0x8a6f4d, seed = 67): THREE.MeshStandardMat
 // cliffs don't stretch. Textures are sampled raw (Linear) and linearised in the
 // shader (pow 2.2), since custom texture2D calls bypass three's sRGB auto-decode.
 let groundMat: THREE.MeshStandardMaterial | null = null;
+// shared uniform so the dev menu can fade the ground texture out (1 = textured,
+// 0 = flat splat-tone) without recompiling the material
+const groundTexUniform = { value: 1.0 };
+export function setGroundTexture(on: boolean): void { groundTexUniform.value = on ? 1.0 : 0.0; }
 export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
   if (groundMat) return groundMat;
   const loader = new THREE.TextureLoader();
@@ -374,6 +378,7 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
     sh.uniforms.tDirt = { value: tDirt };
     sh.uniforms.tRock = { value: tRock };
     sh.uniforms.uTile = { value: 1 / 9 }; // ~9 m per texture repeat
+    sh.uniforms.uTexAmt = groundTexUniform; // dev toggle: fade texture detail out
 
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>',
@@ -383,7 +388,7 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
 
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>',
-        '#include <common>\nuniform sampler2D tGrass;\nuniform sampler2D tForest;\nuniform sampler2D tDirt;\nuniform sampler2D tRock;\nuniform float uTile;\nvarying vec4 vSplat;\nvarying float vRiver;\nvarying vec3 vWPos;\nvarying vec3 vWNormal;\n' +
+        '#include <common>\nuniform sampler2D tGrass;\nuniform sampler2D tForest;\nuniform sampler2D tDirt;\nuniform sampler2D tRock;\nuniform float uTile;\nuniform float uTexAmt;\nvarying vec4 vSplat;\nvarying float vRiver;\nvarying vec3 vWPos;\nvarying vec3 vWNormal;\n' +
         // value noise (for UV domain-warp below)
         'float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' +
         'float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);\n' +
@@ -410,6 +415,14 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
                 + texture2D(tRock, vWPos.xz * uTile).rgb * bn.y
                 + texture2D(tRock, vWPos.xy * uTile).rgb * bn.z;
         vec3 blended = cG * w.x + cF * w.y + cD * w.z + cR * w.w;
+        // dev texture toggle: fade to flat per-splat tones (approx texture averages)
+        // so the ground keeps its grass/forest/dirt/rock regions but loses all tile
+        // detail — lets you see the texture's contribution to artifacts in isolation
+        if (uTexAmt < 0.999) {
+          vec3 flatBlend = vec3(0.18,0.24,0.15)*w.x + vec3(0.10,0.16,0.08)*w.y
+                         + vec3(0.30,0.24,0.16)*w.z + vec3(0.34,0.32,0.29)*w.w;
+          blended = mix(flatBlend, blended, uTexAmt);
+        }
         blended = pow(blended, vec3(2.2)); // sRGB -> linear (manual, see note)
         blended *= 1.25;                    // lift the (realistic, dark) ground to sit with the bright kit
         // large-scale variation further breaks the tile repeat

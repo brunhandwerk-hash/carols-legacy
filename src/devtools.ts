@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MAP } from './config';
 import { surfaceHeight, worldToLonLat, TERR_SEG_X, TERR_SEG_Z, buildDemPointsMesh } from './terrain';
+import { setGroundTexture } from './materials';
 import { toast } from './ui';
 import type { WorldRefs } from './world';
 
@@ -396,6 +397,11 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     if (!demPts) { demPts = buildDemPointsMesh(); world.scene.add(demPts); }
     else { demPts.visible = !demPts.visible; }
     demBtn.classList.toggle('on', demPts.visible);
+  });
+  const texBtn = document.getElementById('dev-tex') as HTMLButtonElement;
+  let texOn = true;
+  texBtn?.addEventListener('click', () => {
+    texOn = !texOn; setGroundTexture(texOn); texBtn.classList.toggle('on', texOn);
   });
 
   // ---- pointer interception (capture phase on window pre-empts input.ts) ----
