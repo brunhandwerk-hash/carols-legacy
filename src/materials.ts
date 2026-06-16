@@ -384,11 +384,23 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>',
         '#include <common>\nuniform sampler2D tGrass;\nuniform sampler2D tForest;\nuniform sampler2D tDirt;\nuniform sampler2D tRock;\nuniform float uTile;\nvarying vec4 vSplat;\nvarying float vRiver;\nvarying vec3 vWPos;\nvarying vec3 vWNormal;\n' +
+        // value noise (for UV domain-warp below)
+        'float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' +
+        'float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);\n' +
+        '  float a=h21(i), b=h21(i+vec2(1,0)), c=h21(i+vec2(0,1)), d=h21(i+vec2(1,1));\n' +
+        '  return mix(mix(a,b,f.x), mix(c,d,f.x), f.y); }\n' +
         // de-tile: blend the texture with a second rotated/rescaled sample so the
         // ~9 m repeat doesn't read as an obvious grid at close range
         'vec3 detile(sampler2D t, vec2 uv){ vec3 a = texture2D(t, uv).rgb; vec3 b = texture2D(t, uv * -0.41 + vec2(0.37, 0.61)).rgb; return mix(a, b, 0.4); }')
       .replace('#include <map_fragment>', `
-        vec2 guv = vWPos.xz * uTile;
+        // Domain-warp the sampling position with noise BEFORE tiling. A rigid
+        // world-space tiling (even de-tiled) beats into a regular diagonal moiré
+        // that reads as parallel lines on flat ground; warping the lookup jitters
+        // the tile phase across space so the repeat never lines up. Two octaves
+        // (one coarse, one fine) avoid the warp itself imprinting a single period.
+        vec2 wp = vWPos.xz * 0.013;
+        vec2 warp = (vec2(vnoise(wp), vnoise(wp + 17.3)) - 0.5) * 11.0;
+        vec2 guv = (vWPos.xz + warp) * uTile;
         vec4 w = max(vSplat, 0.0); w /= (w.x + w.y + w.z + w.w + 1e-4);
         vec3 cG = detile(tGrass, guv);
         vec3 cF = detile(tForest, guv);
