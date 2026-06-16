@@ -1,0 +1,68 @@
+{
+  "founding": {
+    "file": "photos/founding.jpg",
+    "credit": "Alexandru Antoniu · Public domain · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:L%27Eglise._Sinaia.jpg",
+    "title": "File:L'Eglise. Sinaia.jpg"
+  },
+  "monastery": {
+    "file": "photos/monastery.jpg",
+    "credit": "Karl Danielis · Public domain · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Karl_Danielis_-_M%C3%A2n%C4%83stirea_Sinaia,_1860.jpg",
+    "title": "File:Karl Danielis - Mânăstirea Sinaia, 1860.jpg"
+  },
+  "oldinn": {
+    "file": "photos/oldinn.jpg",
+    "credit": "AlexandruValeanu · CC BY-SA 3.0 ro · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Hotel_Caraiman.jpg",
+    "title": "File:Hotel Caraiman.jpg"
+  },
+  "station": {
+    "file": "photos/station.jpg",
+    "credit": "Andrei Stroe · CC BY-SA 2.5 · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Sinaia_railway.jpg",
+    "title": "File:Sinaia railway.jpg"
+  },
+  "foisor": {
+    "file": "photos/foisor.jpg",
+    "credit": "Joe Mabel · CC BY-SA 4.0 · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Aerial_photograph_looking_east_toward_Sinaia,_Prahova_County,_Romania,_with_Bu%C8%99teni_at_left.jpg",
+    "title": "File:Aerial photograph looking east toward Sinaia, Prahova County, Romania, with Bușteni at left.jpg"
+  },
+  "cavalerilor": {
+    "file": "photos/cavalerilor.jpg",
+    "credit": "Banciu romulus · CC BY-SA 3.0 ro · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Casa_de_oaspeti.JPG",
+    "title": "File:Casa de oaspeti.JPG"
+  },
+  "economat": {
+    "file": "photos/economat.jpg",
+    "credit": "Unknown authorUnknown author · Public domain · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Vorstelijke_woning_te_Sina%C3%AFa.jpg",
+    "title": "File:Vorstelijke woning te Sinaïa.jpg"
+  },
+  "guard": {
+    "file": "photos/guard.jpg",
+    "credit": "Camil72 · CC BY-SA 3.0 · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Camil_Iamandescu-Corpul_de_Garda_Sinaia_A.jpg",
+    "title": "File:Camil Iamandescu-Corpul de Garda Sinaia A.jpg"
+  },
+  "peles": {
+    "file": "photos/peles.jpg",
+    "credit": "TiberiuSahlean · CC BY-SA 3.0 ro · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Castelul_Peles,_Sinaia_-_Vedere_panoramica.jpg",
+    "title": "File:Castelul Peles, Sinaia - Vedere panoramica.jpg"
+  },
+  "wwi": {
+    "file": "photos/wwi.jpg",
+    "credit": "German official photographer · Public domain · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:The_Occupation_of_Romania_by_the_Central_Powers,_1916-1918_Q87272.jpg",
+    "title": "File:The Occupation of Romania by the Central Powers, 1916-1918 Q87272.jpg"
+  },
+  "abdication": {
+    "file": "photos/abdication.jpg",
+    "credit": "Fabrica de timbre · Public domain · Wikimedia Commons",
+    "source": "https://commons.wikimedia.org/wiki/File:Michael-I-of-Romania.jpg",
+    "title": "File:Michael-I-of-Romania.jpg"
+  }
+}

@@ -1,5 +1,5 @@
 import { G } from './state';
-import { showBanner, setEraLabel } from './ui';
+import { showBanner, setEraLabel, buildingThumb } from './ui';
 
 // ---------------------------------------------------------------------------
 // The Chronicle of Sinaia: short historical vignettes that surface as the town
@@ -14,6 +14,15 @@ export interface ChronicleEntry {
   year: string;   // display label, e.g. '15 Aug 1695'
   title: string;
   text: string;
+  photo?: string; // optional historical photo URL (public/photos/…) shown in place
+                  // of the building thumbnail — conveys the real period vibe
+  credit?: string; // attribution/source line for the photo (shown small under it)
+}
+
+// the image to illustrate an entry: a historical photo if one is set, otherwise
+// the rendered building preview (landmark ids match building keys); may be undefined
+function entryImage(id: string): string | undefined {
+  return CHRONICLE[id]?.photo ?? buildingThumb(id);
 }
 
 export const CHRONICLE: Record<string, ChronicleEntry> = {
@@ -73,6 +82,28 @@ export const CHRONICLE: Record<string, ChronicleEntry> = {
     text: 'Summoned from Sinaia to Bucharest, King Michael I is forced to abdicate; within months the royal domain is nationalised. The castles fall silent and the monarchy that built this town passes into history — but the valley, and its chronicle, endure.',
   },
 };
+
+// Historical photos for each entry, fetched from Wikimedia Commons by
+// scripts/fetch-photos.mjs (credits from public/photos/credits.json). These are
+// placeholders — drop your own files in public/photos/ keeping the same
+// <id>.jpg name and the chronicle picks them up with no code change. Photos are
+// served from public/, so the URL is /photos/<id>.jpg.
+const PHOTOS: Record<string, { photo: string; credit: string }> = {
+  founding:    { photo: '/photos/founding.jpg',    credit: 'Alexandru Antoniu · Public domain · Wikimedia Commons' },
+  monastery:   { photo: '/photos/monastery.jpg',   credit: 'Karl Danielis, 1860 · Public domain · Wikimedia Commons' },
+  oldinn:      { photo: '/photos/oldinn.jpg',       credit: 'AlexandruValeanu · CC BY-SA 3.0 ro · Wikimedia Commons' },
+  station:     { photo: '/photos/station.jpg',      credit: 'Andrei Stroe · CC BY-SA 2.5 · Wikimedia Commons' },
+  foisor:      { photo: '/photos/foisor.jpg',       credit: 'Joe Mabel · CC BY-SA 4.0 · Wikimedia Commons' },
+  cavalerilor: { photo: '/photos/cavalerilor.jpg',  credit: 'Banciu Romulus · CC BY-SA 3.0 ro · Wikimedia Commons' },
+  economat:    { photo: '/photos/economat.jpg',     credit: 'Unknown author · Public domain · Wikimedia Commons' },
+  guard:       { photo: '/photos/guard.jpg',        credit: 'Camil Iamandescu · CC BY-SA 3.0 · Wikimedia Commons' },
+  peles:       { photo: '/photos/peles.jpg',        credit: 'TiberiuSahlean · CC BY-SA 3.0 ro · Wikimedia Commons' },
+  wwi:         { photo: '/photos/wwi.jpg',           credit: 'German official photographer, 1916–18 · Public domain · Wikimedia Commons' },
+  abdication:  { photo: '/photos/abdication.jpg',    credit: 'Public domain · Wikimedia Commons' },
+};
+for (const [id, p] of Object.entries(PHOTOS)) {
+  if (CHRONICLE[id]) { CHRONICLE[id].photo = p.photo; CHRONICLE[id].credit = p.credit; }
+}
 
 // ---------------------------------------------------------------------------
 // Era/year-driven beats. Unlike the landmark entries above, these are not tied
@@ -148,7 +179,7 @@ export function recordChronicle(id: string): boolean {
   const e = CHRONICLE[id];
   if (!e || G.chronicle.includes(id)) return false;
   G.chronicle.push(id);
-  showBanner(e.year, e.title, e.text);
+  showBanner(e.year, e.title, e.text, entryImage(id)); // illustrate with a photo, else the building
   if (panelEl?.style.display === 'block') {
     renderChronicle();
   } else {
@@ -193,8 +224,12 @@ function renderChronicle(): void {
   for (const id of G.chronicle) {
     const e = CHRONICLE[id];
     if (!e) continue;
+    const img = entryImage(id);
+    const credit = e.photo && e.credit ? `<div class="chr-credit">${e.credit}</div>` : '';
+    const pic = img ? `<img class="chr-pic" src="${img}" alt="">${credit}` : '';
     const li = document.createElement('li');
     li.innerHTML =
+      `${pic}` +
       `<div class="chr-year">${e.year}</div>` +
       `<div class="chr-title">${e.title}</div>` +
       `<div class="chr-text">${e.text}</div>`;

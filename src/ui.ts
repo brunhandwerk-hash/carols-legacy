@@ -51,6 +51,10 @@ import { renderBuildingThumbnails } from './thumbnails';
 
 // rendered building preview images, keyed by build def (filled async at startup)
 const thumbs: Record<string, string> = {};
+
+// the rendered preview for a building key, if it's been generated yet (used by
+// the Chronicle to illustrate landmark entries with the actual building)
+export function buildingThumb(key: string): string | undefined { return thumbs[key]; }
 export function refreshObjectives(): void {
   const era = ERAS[G.eraIndex];
   $('obj-title').textContent = `${era.name} · ${era.yearLabel}`;
@@ -69,15 +73,15 @@ export function refreshObjectives(): void {
 // Banners share a single on-screen element, so concurrent ones (e.g. a landmark
 // completing on the same tick it turns the era over) would stomp each other.
 // Queue them and play through one at a time instead.
-interface BannerMsg { year: string; title: string; text: string }
+interface BannerMsg { year: string; title: string; text: string; img?: string }
 const BANNER_HOLD = 9000; // ms a banner stays up
 const BANNER_GAP = 1300;  // ms to let it fade out (CSS opacity transition is 1.2s)
 const bannerQueue: BannerMsg[] = [];
 let bannerTimer: number | undefined;
 let bannerActive = false;
 
-export function showBanner(year: string, title: string, text: string): void {
-  bannerQueue.push({ year, title, text });
+export function showBanner(year: string, title: string, text: string, img?: string): void {
+  bannerQueue.push({ year, title, text, img });
   if (!bannerActive) showNextBanner();
 }
 
@@ -86,6 +90,9 @@ function showNextBanner(): void {
   const msg = bannerQueue.shift();
   if (!msg) { bannerActive = false; b.style.opacity = '0'; return; }
   bannerActive = true;
+  const pic = b.querySelector('.pic') as HTMLImageElement;
+  if (msg.img) { pic.src = msg.img; pic.style.display = 'block'; }
+  else { pic.removeAttribute('src'); pic.style.display = 'none'; }
   (b.querySelector('.year') as HTMLElement).textContent = msg.year;
   (b.querySelector('.title') as HTMLElement).textContent = msg.title;
   (b.querySelector('.text') as HTMLElement).textContent = msg.text;
