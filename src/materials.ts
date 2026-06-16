@@ -410,23 +410,6 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
                 + texture2D(tRock, vWPos.xz * uTile).rgb * bn.y
                 + texture2D(tRock, vWPos.xy * uTile).rgb * bn.z;
         vec3 blended = cG * w.x + cF * w.y + cD * w.z + cR * w.w;
-        // Detail-fade by screen footprint: where the tiled detail minifies below
-        // ~pixel size (far ground, and ESPECIALLY at grazing angles) it aliases
-        // into a moiré — the diagonal "lines" on far flat terrain. fwidth(guv) is
-        // how fast the tile UV moves per pixel; fade toward a blurred (high-mip ~
-        // average) sample once a pixel spans too much texture, so minified ground
-        // has no high-freq left to alias. Head-on/near ground keeps full crispness.
-        // Footprint-based (not distance) so it tracks the viewing angle. This is the
-        // real moiré fix; the UV warp above only de-correlates the tile phase.
-        float fp = max(length(dFdx(guv)), length(dFdy(guv)));
-        float dfade = smoothstep(0.03, 0.16, fp);
-        if (dfade > 0.002) {
-          vec3 avg = textureLod(tGrass, guv, 6.0).rgb * w.x
-                   + textureLod(tForest, guv, 6.0).rgb * w.y
-                   + textureLod(tDirt, guv, 6.0).rgb * w.z
-                   + textureLod(tRock, vWPos.xz * uTile, 6.0).rgb * w.w;
-          blended = mix(blended, avg, dfade);
-        }
         blended = pow(blended, vec3(2.2)); // sRGB -> linear (manual, see note)
         blended *= 1.25;                    // lift the (realistic, dark) ground to sit with the bright kit
         // large-scale variation further breaks the tile repeat
