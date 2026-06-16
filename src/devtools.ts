@@ -367,7 +367,6 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   let origBackdropMat: THREE.Material | null = null;
   let flatMat: THREE.MeshStandardMaterial | null = null;
   let wireMat: THREE.MeshBasicMaterial | null = null;
-  let coarseTerrain: THREE.Mesh | null = null; // low-res copy shown in wireframe mode
   let wireOn = false, flatOn = false, terrainOn = true;
   let demPts: THREE.Points | null = null;
   const wireBtn = document.getElementById('dev-wireframe') as HTMLButtonElement;
@@ -384,30 +383,15 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     // ONE shared wireframe material for terrain + backdrop, so both wireframes look
     // identical — plain black, unlit, fog off (distance doesn't tint it)
     if (!wireMat) wireMat = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, fog: false, toneMapped: false });
-    // The real terrain is ~2M triangles — its wireframe reads as a solid fill. Build
-    // a LOW-RES copy of the same surface (~1/7 res, ~48 m cells) to wireframe instead,
-    // so the playable mesh is actually legible. Sampled from surfaceHeight so it
-    // follows the rendered ground.
-    if (!coarseTerrain) {
-      const SX = Math.round(TERR_SEG_X / 7), SZ = Math.round(TERR_SEG_Z / 7);
-      const geo = new THREE.PlaneGeometry(MAP.width, MAP.depth, SX, SZ);
-      geo.rotateX(-Math.PI / 2);
-      const pos = geo.attributes.position as THREE.BufferAttribute;
-      for (let i = 0; i < pos.count; i++) pos.setY(i, surfaceHeight(pos.getX(i), pos.getZ(i)));
-      coarseTerrain = new THREE.Mesh(geo, wireMat);
-      coarseTerrain.name = 'coarseTerrain';
-      coarseTerrain.visible = false;
-      world.scene.add(coarseTerrain);
-    }
   }
-  // pick the material/visibility for each mesh from the current toggle state
+  // Every lens is the SAME mesh wearing different "clothing": we only swap the
+  // material / visibility on the real terrain + backdrop objects, never a copy.
+  // Wireframe is therefore the actual playable geometry (dense, ~2M tris) seen
+  // through the black wireframe material.
   function applyDebugMats(): void {
     ensureDebugMats();
     const t = terrainMesh(), bk = findMesh('backdrop');
-    // Terrain toggle hides the playable mesh entirely (dense + low-res copy).
-    // Otherwise: wireframe mode shows the low-res copy, normal mode the dense mesh.
-    if (t) { t.visible = terrainOn && !wireOn; t.material = flatOn ? flatMat! : origTerrainMat!; }
-    if (coarseTerrain) coarseTerrain.visible = terrainOn && wireOn;
+    if (t) { t.visible = terrainOn; t.material = wireOn ? wireMat! : flatOn ? flatMat! : origTerrainMat!; }
     if (bk) bk.material = wireOn ? wireMat! : origBackdropMat!;
   }
   const terrBtn = document.getElementById('dev-terrain') as HTMLButtonElement;
