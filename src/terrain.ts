@@ -371,8 +371,8 @@ export function terrainHeight(x: number, z: number): number {
 // is static (built once at boot, never recomputed per frame), so the only cost of
 // the higher vertex count is GPU memory + a slightly longer one-time boot paint;
 // flattenUnder() edits just a local window so building placement stays cheap.
-export const TERR_SEG_X = 928;  // ~6.7 m spacing, matches the DEM
-export const TERR_SEG_Z = 1072;
+export const TERR_SEG_X = 626;  // ~10 m spacing (was 928 / ~6.7 m) — ~904k tris vs ~2M
+export const TERR_SEG_Z = 722;
 
 export function surfaceHeight(x: number, z: number): number {
   const gx = MAP.width / TERR_SEG_X, gz = MAP.depth / TERR_SEG_Z;
