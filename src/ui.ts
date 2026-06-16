@@ -66,15 +66,35 @@ export function refreshObjectives(): void {
 }
 
 // ---- banner + toast ----
+// Banners share a single on-screen element, so concurrent ones (e.g. a landmark
+// completing on the same tick it turns the era over) would stomp each other.
+// Queue them and play through one at a time instead.
+interface BannerMsg { year: string; title: string; text: string }
+const BANNER_HOLD = 9000; // ms a banner stays up
+const BANNER_GAP = 1300;  // ms to let it fade out (CSS opacity transition is 1.2s)
+const bannerQueue: BannerMsg[] = [];
 let bannerTimer: number | undefined;
+let bannerActive = false;
+
 export function showBanner(year: string, title: string, text: string): void {
+  bannerQueue.push({ year, title, text });
+  if (!bannerActive) showNextBanner();
+}
+
+function showNextBanner(): void {
   const b = $('banner');
-  (b.querySelector('.year') as HTMLElement).textContent = year;
-  (b.querySelector('.title') as HTMLElement).textContent = title;
-  (b.querySelector('.text') as HTMLElement).textContent = text;
+  const msg = bannerQueue.shift();
+  if (!msg) { bannerActive = false; b.style.opacity = '0'; return; }
+  bannerActive = true;
+  (b.querySelector('.year') as HTMLElement).textContent = msg.year;
+  (b.querySelector('.title') as HTMLElement).textContent = msg.title;
+  (b.querySelector('.text') as HTMLElement).textContent = msg.text;
   b.style.opacity = '1';
   window.clearTimeout(bannerTimer);
-  bannerTimer = window.setTimeout(() => { b.style.opacity = '0'; }, 9000);
+  bannerTimer = window.setTimeout(() => {
+    b.style.opacity = '0';
+    bannerTimer = window.setTimeout(showNextBanner, BANNER_GAP);
+  }, BANNER_HOLD);
 }
 
 let toastTimer: number | undefined;

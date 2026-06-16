@@ -142,10 +142,11 @@ export function refreshChronicle(): void {
   updateBadge();
 }
 
-// reveal a snippet the first time its landmark is completed
-export function recordChronicle(id: string): void {
+// reveal a snippet the first time its landmark is completed. Returns true if it
+// announced a new beat (banner shown), so callers can skip a redundant toast.
+export function recordChronicle(id: string): boolean {
   const e = CHRONICLE[id];
-  if (!e || G.chronicle.includes(id)) return;
+  if (!e || G.chronicle.includes(id)) return false;
   G.chronicle.push(id);
   showBanner(e.year, e.title, e.text);
   if (panelEl?.style.display === 'block') {
@@ -154,6 +155,7 @@ export function recordChronicle(id: string): void {
     unread++;
     updateBadge();
   }
+  return true;
 }
 
 function toggleChronicle(): void {

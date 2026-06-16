@@ -126,8 +126,9 @@ async function boot(): Promise<void> {
   }
 
   setOnBuildingComplete((b: Building) => {
-    toast(`${b.def.name} is complete.`);
-    recordChronicle(b.def.key); // landmark completions write a page of the town's history
+    // landmark completions get a full chronicle banner; ordinary buildings (which
+    // have no history beat) get a plain toast instead — avoid announcing both.
+    if (!recordChronicle(b.def.key)) toast(`${b.def.name} is complete.`);
     refreshObjectives();
     refreshSelectionPanel();
   });
