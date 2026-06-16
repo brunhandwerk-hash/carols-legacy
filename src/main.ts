@@ -15,7 +15,7 @@ import { Villager } from './units';
 import { initEras, updateEras } from './eras';
 import { initInput, CameraRig } from './input';
 import { initMinimap, drawMinimap } from './minimap';
-import { updateHud, refreshSelectionPanel, refreshObjectives, toast, setSelection, updateSelectionStatus, initBuildBar } from './ui';
+import { updateHud, refreshSelectionPanel, refreshObjectives, toast, setSelection, updateSelectionStatus, initBuildBar, setCameraJump } from './ui';
 import { loadDem, loadBackdrop, lonLatToWorld, setRoads, updateWater } from './terrain';
 import { initWildlife, updateWildlife } from './wildlife';
 import { autoAssign } from './labor';
@@ -116,6 +116,7 @@ async function boot(): Promise<void> {
   G.resources.wood = START.wood;
   G.resources.stone = START.stone;
   G.resources.food = START.food;
+  G.resources.water = START.water;
   G.resources.coin = START.coin;
 
   new Building('camp', START.camp.x, START.camp.z, 'done', scene, 0.4);
@@ -134,10 +135,13 @@ async function boot(): Promise<void> {
   setPopulationCallbacks(
     () => toast('A new settler has come of age in Sinaia.'),
     () => toast('A villager has starved — the larder is empty!'),
+    () => toast('Villagers are freezing — they need firewood (wood).'),
+    () => toast('Villagers are parched — build a Fântână (Well) for water.'),
   );
 
   rig = initInput(canvas, camera, world); // opens on the hardcoded view (see rig defaults)
   initMinimap((x, z) => rig.jumpTo(x, z));
+  setCameraJump((x, z) => rig.jumpTo(x, z)); // build-bar landmarks fly the camera to their plot
   initIdleCycler();
 
   // ---- no intro: load straight into the map (re-add the title screen later) ----

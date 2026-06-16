@@ -37,9 +37,13 @@
     #topbar .dot.planks { background: #c9a26a; }
     #topbar .dot.stone { background: #9a958c; }
     #topbar .dot.block { background: #c4bdaf; }
+    #topbar .dot.lime { background: #e6e0cf; }
+    #topbar .dot.nails { background: #7f8896; }
     #topbar .dot.food { background: #cc5a3a; }
+    #topbar .dot.water { background: #4d9fd1; }
     #topbar .dot.coin { background: #e7c64b; border-radius: 50%; }
     #topbar .dot.pop { background: #b05f4a; border-radius: 50%; }
+    #topbar .rate { font-size: 11px; opacity: 0.6; margin-left: 2px; }
     #topbar #era-label { color: var(--accent); font-style: italic; margin-left: 8px; }
 
     #objectives {
@@ -88,7 +92,10 @@
     button.buildbtn .cdot.planks { background: #c9a26a; }
     button.buildbtn .cdot.stone { background: #9a958c; }
     button.buildbtn .cdot.block { background: #c4bdaf; }
+    button.buildbtn .cdot.lime { background: #e6e0cf; }
+    button.buildbtn .cdot.nails { background: #7f8896; }
     button.buildbtn .cdot.food { background: #cc5a3a; }
+    button.buildbtn .cdot.water { background: #4d9fd1; }
     button.buildbtn .cdot.coin { background: #e7c64b; border-radius: 50%; }
 
     #idle-btn {
@@ -125,13 +132,14 @@
     }
     #buildbar .bb-head { display: flex; align-items: center; gap: 12px; padding: 0 2px; }
     #buildbar .bb-title { font-size: 12px; letter-spacing: 3px; font-weight: bold; color: var(--accent); font-variant: small-caps; }
-    #buildbar .bb-search {
-      flex: 1; min-width: 0; font-family: inherit; font-size: 12px; color: var(--ink);
-      background: rgba(0,0,0,0.32); border: 1px solid rgba(212,168,67,0.25); border-radius: 999px; padding: 6px 13px;
-      transition: border-color 0.15s, box-shadow 0.15s;
+    #buildbar .bb-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px; }
+    #buildbar .bb-tab {
+      font-family: inherit; font-size: 11px; letter-spacing: 0.4px; color: var(--ink); cursor: pointer;
+      background: rgba(0,0,0,0.28); border: 1px solid rgba(212,168,67,0.22); border-radius: 999px; padding: 4px 12px;
+      transition: border-color 0.12s, background 0.12s, color 0.12s;
     }
-    #buildbar .bb-search::placeholder { color: rgba(240,230,210,0.4); }
-    #buildbar .bb-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(212,168,67,0.15); }
+    #buildbar .bb-tab:hover { border-color: var(--accent); }
+    #buildbar .bb-tab.active { background: rgba(212,168,67,0.22); border-color: var(--accent); color: var(--accent); font-weight: bold; }
     #buildbar .bb-scroll { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; max-width: 76vw; padding: 2px 2px 5px; }
     #buildbar .bb-scroll::-webkit-scrollbar { height: 7px; }
     #buildbar .bb-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
@@ -149,7 +157,7 @@
       box-shadow: 0 6px 18px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,168,67,0.35);
     }
     #buildbar .bb:disabled { opacity: 0.4; cursor: default; }
-    #buildbar .bb.locked { border-style: dashed; }
+    #buildbar .bb.locked { border-style: dashed; opacity: 0.5; cursor: help; }
     #buildbar .bb .bb-thumb {
       width: 58px; height: 48px; display: flex; align-items: center; justify-content: center;
     }
@@ -197,7 +205,10 @@
     #buildbar .cdot.planks, #bb-detail .cdot.planks { background: #c9a26a; }
     #buildbar .cdot.stone, #bb-detail .cdot.stone { background: #9a958c; }
     #buildbar .cdot.block, #bb-detail .cdot.block { background: #c4bdaf; }
+    #buildbar .cdot.lime, #bb-detail .cdot.lime { background: #e6e0cf; }
+    #buildbar .cdot.nails, #bb-detail .cdot.nails { background: #7f8896; }
     #buildbar .cdot.food, #bb-detail .cdot.food { background: #cc5a3a; }
+    #buildbar .cdot.water, #bb-detail .cdot.water { background: #4d9fd1; }
     #buildbar .cdot.coin, #bb-detail .cdot.coin { background: #e7c64b; border-radius: 50%; }
 
     #gameover {
@@ -219,7 +230,7 @@
     #banner .text { font-size: 16px; font-style: italic; margin-top: 8px; max-width: 560px; opacity: 0.95; }
 
     #toast {
-      position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+      position: absolute; top: 54px; left: 50%; transform: translateX(-50%);
       background: var(--panel-bg); border: 1px solid var(--panel-edge); border-radius: 4px;
       padding: 6px 14px; font-size: 14px; opacity: 0; transition: opacity 0.4s; pointer-events: none;
     }
@@ -263,11 +274,14 @@
       <button id="btn-load" title="Load last save">Load</button>
     </div>
     <div id="topbar" class="panel">
-      <span class="res"><span class="dot wood"></span>Wood <span id="r-wood">0</span></span>
+      <span class="res"><span class="dot wood"></span>Wood <span id="r-wood">0</span><span class="rate" id="rate-wood"></span></span>
       <span class="res"><span class="dot planks"></span>Planks <span id="r-planks">0</span></span>
       <span class="res"><span class="dot stone"></span>Stone <span id="r-stone">0</span></span>
       <span class="res"><span class="dot block"></span>Block <span id="r-block">0</span></span>
-      <span class="res"><span class="dot food"></span>Food <span id="r-food">0</span></span>
+      <span class="res"><span class="dot lime"></span>Lime <span id="r-lime">0</span></span>
+      <span class="res"><span class="dot nails"></span>Nails <span id="r-nails">0</span></span>
+      <span class="res"><span class="dot food"></span>Food <span id="r-food">0</span><span class="rate" id="rate-food"></span></span>
+      <span class="res"><span class="dot water"></span>Water <span id="r-water">0</span><span class="rate" id="rate-water"></span></span>
       <span class="res"><span class="dot coin"></span>Coin <span id="r-coin">0</span></span>
       <span class="res"><span class="dot pop"></span>Pop <span id="r-pop">0/0</span></span>
       <span id="era-label"></span>

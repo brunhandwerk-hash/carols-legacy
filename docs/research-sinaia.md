@@ -16,6 +16,13 @@ Confidence flags: [H] high, [M] medium/sources vary, [L] low — verify before e
 - 1876–1879 — Ploiești–Predeal line through the Prahova Valley; **opened 1879** with a Sinaia station. [H]
 - 1886 — separate **Royal Station** just north of the public one. [M] Remodeled 1938–40 (Duiliu Marcu?). [M]
 
+### Industrialization (1880s–90s)
+The railway turned Sinaia into an industrial town as well as a resort (source: ro.wikipedia, *Istoric*). [M]
+- **Cherestea (sawmill/timber works)** — owned by the industrialists Popovici & Costinescu; sawn timber for the building boom. [M]
+- **Var hidraulic (hydraulic-lime works)** — also Costinescu; burnt limestone into mortar-lime. [M] → in-game **Lime Kiln** (stone → lime).
+- **Jan 1892 — Fabrică de cuie (iron-nail factory)**, 45 employees (Romanians and Germans). [M] → in-game **Nail Forge** (ore → nails).
+- 1925 (Anuarul Socec) — sewerage + running water from the Peleș/Vânturiș springs, and a **1500 HP hydro-electric plant** powering the public electric lighting. [M]
+
 ### Royal / Peleș complex
 - Aug 1866 — Prince **Carol I first visits**, lodging at the monastery. [H]
 - 1872 — Carol I buys the estate (~1,000 pogoane). [M — some say 1871]

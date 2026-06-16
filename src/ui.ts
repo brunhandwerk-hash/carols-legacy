@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { G, canAfford, pay, ResKind } from './state';
 import { Building, DEFS, prereqsMet, BuildingDef } from './buildings';
+import { EAT_RATE, WARM_RATE, DRINK_RATE } from './population';
 import { riverX } from './terrain';
 import type { Villager } from './units';
 
@@ -11,9 +12,17 @@ export function updateHud(): void {
   $('r-planks').textContent = String(Math.floor(G.resources.planks));
   $('r-stone').textContent = String(Math.floor(G.resources.stone));
   $('r-block').textContent = String(Math.floor(G.resources.block));
+  $('r-lime').textContent = String(Math.floor(G.resources.lime));
+  $('r-nails').textContent = String(Math.floor(G.resources.nails));
   $('r-food').textContent = String(Math.floor(G.resources.food));
+  $('r-water').textContent = String(Math.floor(G.resources.water));
   $('r-coin').textContent = String(Math.floor(G.resources.coin));
   $('r-pop').textContent = `${G.villagers.length}/${G.popCap}`;
+  // per-capita upkeep: villagers eat food, burn wood (firewood) and drink water
+  const pop = G.villagers.length;
+  $('rate-food').textContent = pop ? `−${(pop * EAT_RATE).toFixed(2)}/s` : '';
+  $('rate-wood').textContent = pop ? `−${(pop * WARM_RATE).toFixed(2)}/s` : '';
+  $('rate-water').textContent = pop ? `−${(pop * DRINK_RATE).toFixed(2)}/s` : '';
   const idle = G.villagers.filter((v) => v.isIdle).length;
   $('idle-count').textContent = String(idle);
   ($('idle-btn') as HTMLButtonElement).disabled = idle === 0;
@@ -84,9 +93,24 @@ export function setGhostRequest(fn: GhostRequest): void { ghostRequest = fn; }
 
 // cost rendered as little colored resource chips for the build cards
 function costChips(cost: Partial<Record<ResKind, number>>): string {
-  const chips = (['wood', 'planks', 'stone', 'block', 'food', 'coin'] as ResKind[])
+  const chips = (['wood', 'planks', 'stone', 'block', 'lime', 'nails', 'food', 'water', 'coin'] as ResKind[])
     .filter((k) => cost[k])
     .map((k) => `<span class="ci"><span class="cdot ${k}"></span>${cost[k]}</span>`);
+  return chips.join('');
+}
+
+// human-readable resource names, used where the colored dot alone isn't clear
+const RES_NAMES: Record<ResKind, string> = {
+  wood: 'Wood', planks: 'Planks', stone: 'Stone', block: 'Stone block',
+  lime: 'Lime', nails: 'Nails',
+  food: 'Food', water: 'Water', coin: 'Coin',
+};
+
+// like costChips, but spells out the resource name next to each amount
+function costChipsLabeled(cost: Partial<Record<ResKind, number>>): string {
+  const chips = (['wood', 'planks', 'stone', 'block', 'lime', 'nails', 'food', 'water', 'coin'] as ResKind[])
+    .filter((k) => cost[k])
+    .map((k) => `<span class="ci"><span class="cdot ${k}"></span>${cost[k]} ${RES_NAMES[k]}</span>`);
   return chips.join('');
 }
 
@@ -96,13 +120,15 @@ const ICONS: Record<string, string> = {
   sheepfold: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><ellipse cx="10.5" cy="12" rx="6" ry="4.6"/><circle cx="17" cy="10.2" r="2.6"/><line x1="8" y1="16" x2="8" y2="19"/><line x1="13" y1="16" x2="13" y2="19"/></svg>',
   lumbercamp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="15.5" r="3.3"/><circle cx="15" cy="15.5" r="3.3"/><circle cx="11.5" cy="9" r="3.3"/></svg>',
   quarry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3.5" y="13" width="7" height="6"/><rect x="13.5" y="13" width="7" height="6"/><rect x="8.5" y="6" width="7" height="6"/></svg>',
-  forager: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M5 11 H19 L17 19 H7 Z"/><path d="M5 11 a7 4.5 0 0 1 14 0"/><circle cx="9" cy="8.6" r="1.4"/><circle cx="13.2" cy="8.2" r="1.4"/></svg>',
+  forager: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 C12 3 6 10 6 14.5 a6 6 0 0 0 12 0 C18 10 12 3 12 3 Z"/><path d="M9.5 14.5 a2.5 2.5 0 0 0 2.5 2.5"/></svg>',
   hunters: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.4"/><line x1="12" y1="1.5" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22.5" y2="12"/></svg>',
   fishery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 C8 6 15 6 19 12 C15 18 8 18 4 12 Z"/><path d="M19 12 L22.5 9 L22.5 15 Z"/><circle cx="8.5" cy="11" r="0.9" fill="currentColor" stroke="none"/></svg>',
   bridge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9 C8 16 16 16 22 9"/><line x1="2" y1="9" x2="2" y2="15"/><line x1="22" y1="9" x2="22" y2="15"/><line x1="8" y1="13.2" x2="8" y2="17"/><line x1="16" y1="13.2" x2="16" y2="17"/><line x1="12" y1="14" x2="12" y2="17.4"/></svg>',
   stana: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7 C4 4 7 5 8 8"/><path d="M20 7 C20 4 17 5 16 8"/><path d="M6 8 C6 14 9 17 12 17 C15 17 18 14 18 8 C15 6.5 9 6.5 6 8 Z"/><ellipse cx="12" cy="13.7" rx="3.4" ry="2.4"/><circle cx="10" cy="11" r="0.7" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r="0.7" fill="currentColor" stroke="none"/></svg>',
   sawmill: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="13" r="5"/><circle cx="9" cy="13" r="1.2"/><path d="M9 8 v-2 M9 18 v2 M4 13 h-2 M14 13 h6 l2 2 v3 h-6"/></svg>',
   stonecutter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="13" width="8" height="6"/><path d="M3.5 13 l2 -2.5 h8 l-2 2.5 M11.5 13 l2 -2.5 v6 l-2 2.5"/><path d="M15 6 l4 4 l-2 2 l-4 -4 z"/></svg>',
+  limekiln: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20 V11 a6 6 0 0 1 12 0 v9 Z"/><path d="M9.5 20 v-4 h5 v4"/><path d="M12 5 V2 M9 4 l-1.5 -2 M15 4 l1.5 -2"/></svg>',
+  nailforge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14 h8 l-1.5 -3 h-5 z"/><path d="M8 14 v5"/><path d="M14 7 l5 5 l-2 2 l-5 -5 z"/><path d="M13 4 a3 3 0 0 1 4 0"/></svg>',
   villager: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="7.5" r="3"/><path d="M5.5 20 c0 -4 3 -6.5 6.5 -6.5 s6.5 2.5 6.5 6.5"/></svg>',
   hammer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 6 l5 5 l-2 2 l-5 -5 z"/><line x1="11.5" y1="10.5" x2="5" y2="17" /><path d="M12 5 a3 3 0 0 1 4 0"/></svg>',
   demolish: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9 h16 M6 9 v10 h12 V9 M9 9 V6 h6 v3 M10 12.5 v3.5 M14 12.5 v3.5"/></svg>',
@@ -136,14 +162,13 @@ export function refreshSelectionPanel(): void {
     panel.style.display = 'block';
     name.textContent = b.def.name;
     if (b.phase === 'planned') {
+      // landmarks are raised via the Build ▸ Landmarks menu (placed on this site),
+      // not a panel button — see initBuildBar / placeGhost
       sub.textContent = b.def.desc;
-      actionCard(actions, 'hammer', 'Begin construction', b.def.cost, !canAfford(b.def.cost), () => {
-        if (!canAfford(b.def.cost)) { toast('Not enough resources.'); return; }
-        pay(b.def.cost);
-        b.startConstruction();
-        toast(`Construction of ${b.def.name} has begun — villagers will come to build it.`);
-        refreshSelectionPanel();
-      });
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:11.5px;opacity:0.7;margin-top:4px';
+      hint.textContent = 'Open Build ▸ Landmarks and place it on this site.';
+      actions.appendChild(hint);
     } else if (b.phase === 'site') {
       const pct = Math.floor((b.progress / b.def.buildPoints) * 100);
       sub.textContent = `Under construction — ${pct}%. Villagers will build it.`;
@@ -190,7 +215,7 @@ export function refreshSelectionPanel(): void {
       const btn = actionCard(actions, 'demolish', 'Demolish', {}, false, () => {
         const name = b.def.name;
         const refund = b.demolish();
-        const got = (['wood', 'planks', 'stone', 'block', 'food', 'coin'] as ResKind[])
+        const got = (['wood', 'planks', 'stone', 'block', 'lime', 'nails', 'food', 'water', 'coin'] as ResKind[])
           .filter((k) => refund[k]).map((k) => `${refund[k]} ${k}`).join(', ');
         toast(got ? `${name} demolished — recovered ${got}.` : `${name} demolished.`);
         setSelection([], null);
@@ -225,12 +250,41 @@ export function refreshSelectionPanel(): void {
 }
 
 // ---- always-on build toolbar (build without selecting anyone) ----
-const BUILD_KEYS = ['hut', 'sheepfold', 'lumbercamp', 'quarry', 'forager', 'sawmill', 'stonecutter', 'hunters', 'fishery', 'stana', 'bridge'] as const;
-const buildBtns: Record<string, HTMLButtonElement> = {};
-let buildSearch = ''; // live search query; locked buildings stay hidden regardless
+// Buildings are grouped by function into tabs so the menu isn't an overwhelming
+// flat list. 'landmark' categories don't free-place: clicking flies the camera to
+// the landmark's fixed plot and selects its signpost (Begin construction in place).
+interface BuildCategory { id: string; label: string; keys: string[]; landmark?: boolean }
+const CATEGORIES: BuildCategory[] = [
+  { id: 'housing', label: 'Housing',        keys: ['hut'] },
+  { id: 'gather',  label: 'Gathering',      keys: ['lumbercamp', 'quarry'] },
+  { id: 'food',    label: 'Food',           keys: ['sheepfold', 'hunters', 'fishery', 'stana'] },
+  { id: 'refine',  label: 'Refining',       keys: ['sawmill', 'stonecutter', 'limekiln', 'nailforge'] },
+  { id: 'infra',   label: 'Infrastructure', keys: ['forager', 'bridge'] },
+  { id: 'landmarks', label: 'Landmarks',    keys: ['monastery', 'oldinn', 'station', 'foisor', 'economat', 'cavalerilor', 'guard', 'peles'], landmark: true },
+];
+const ALL_KEYS = CATEGORIES.flatMap((c) => c.keys);
+const catOf: Record<string, BuildCategory> = {};
+for (const c of CATEGORIES) for (const k of c.keys) catOf[k] = c;
 
-function reqNames(def: { requires?: string[] }): string {
-  return (def.requires ?? []).map((k) => DEFS[k]?.name ?? k).join(', ');
+const buildBtns: Record<string, HTMLButtonElement> = {};
+const catTabs: Record<string, HTMLButtonElement> = {};
+let activeCat = CATEGORIES[0].id; // which category tab is showing
+
+// camera fly-to (wired to rig.jumpTo in main.ts) — focuses a landmark's plot
+let cameraJump: (x: number, z: number) => void = () => {};
+export function setCameraJump(fn: (x: number, z: number) => void): void { cameraJump = fn; }
+
+// the planned signpost for a landmark key, if it currently exists (startable)
+function landmarkSignpost(key: string): Building | null {
+  return G.buildings.find((b) => b.plotKey === key && b.phase === 'planned') ?? null;
+}
+
+// the names of prerequisites still missing (not yet built) — what we still need
+function unmetReqNames(def: { requires?: string[] }): string {
+  return (def.requires ?? [])
+    .filter((k) => !G.buildings.some((b) => b.def.key === k && b.phase === 'done'))
+    .map((k) => DEFS[k]?.name ?? k)
+    .join(', ');
 }
 
 // Foundation-style detail card: name, description, the production chain / yields,
@@ -248,14 +302,15 @@ function buildDetail(def: BuildingDef): string {
     tags.push(`<span class="d-tag">Produces ${out} from ${inp} every ${def.produces.interval}s</span>`);
   }
   if (def.foodTrickle) tags.push(`<span class="d-tag"><span class="cdot food"></span>Food +${def.foodTrickle}/s</span>`);
+  if (def.waterTrickle) tags.push(`<span class="d-tag"><span class="cdot water"></span>Water +${def.waterTrickle}/s</span>`);
   if (def.coinTrickle) tags.push(`<span class="d-tag"><span class="cdot coin"></span>Coin +${def.coinTrickle}/s</span>`);
   if (def.boosts) tags.push(`<span class="d-tag">Speeds nearby ${def.boosts} gathering</span>`);
   if (def.popCap) tags.push(`<span class="d-tag">Houses ${def.popCap}</span>`);
   if (def.jobSlots) tags.push(`<span class="d-tag">${def.jobSlots} job${def.jobSlots > 1 ? 's' : ''}</span>`);
   if (tags.length) parts.push(`<div class="d-tags">${tags.join('')}</div>`);
-  const cost = costChips(def.cost);
+  const cost = costChipsLabeled(def.cost);
   parts.push(`<div class="d-cost"><span class="d-lbl">Upfront cost</span>${cost || '<span class="d-free">none</span>'}</div>`);
-  if (!prereqsMet(def)) parts.push(`<div class="d-req">🔒 Requires ${reqNames(def)}</div>`);
+  if (!prereqsMet(def)) parts.push(`<div class="d-req">🔒 Still need: ${unmetReqNames(def)}</div>`);
   return parts.join('');
 }
 
@@ -270,20 +325,33 @@ export function initBuildBar(): void {
   const head = document.createElement('div');
   head.className = 'bb-head';
   head.innerHTML = '<span class="bb-title">BUILD</span>';
-  const search = document.createElement('input');
-  search.className = 'bb-search';
-  search.type = 'text';
-  search.placeholder = 'Search buildings…';
-  head.appendChild(search);
+
+  // category tabs (one group of buildings shown at a time)
+  const tabs = document.createElement('div');
+  tabs.className = 'bb-tabs';
 
   const scroll = document.createElement('div');
   scroll.className = 'bb-scroll';
 
   bar.appendChild(detail);
   bar.appendChild(head);
+  bar.appendChild(tabs);
   bar.appendChild(scroll);
 
-  for (const key of BUILD_KEYS) {
+  for (const c of CATEGORIES) {
+    const tab = document.createElement('button');
+    tab.className = 'bb-tab';
+    tab.textContent = c.label;
+    tab.addEventListener('click', (e) => {
+      e.stopPropagation();
+      activeCat = c.id;
+      refreshBuildBar();
+    });
+    tabs.appendChild(tab);
+    catTabs[c.id] = tab;
+  }
+
+  for (const key of ALL_KEYS) {
     const def = DEFS[key];
     const btn = document.createElement('button');
     btn.className = 'bb';
@@ -293,24 +361,33 @@ export function initBuildBar(): void {
     const show = () => { detail.innerHTML = buildDetail(def); detail.classList.remove('hidden'); };
     btn.addEventListener('mouseenter', show);
     btn.addEventListener('focus', show);
-    btn.addEventListener('click', (e) => { e.stopPropagation(); ghostRequest(key); });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (catOf[key]?.landmark) {
+        // landmarks keep their fixed historical plot — fly to the site and start a
+        // ghost the player drops onto it (placement is valid only over the plot).
+        // Locked (site not unlocked yet) → tell the player what's still needed.
+        const sign = landmarkSignpost(key);
+        if (sign) { cameraJump(sign.x, sign.z); ghostRequest(key); }
+        else toast(`${def.name} needs ${unmetReqNames(def)} first.`);
+      } else if (!prereqsMet(def)) {
+        // shown but locked — tell the player what to build first
+        toast(`${def.name} needs ${unmetReqNames(def)} first.`);
+      } else {
+        ghostRequest(key);
+      }
+    });
     scroll.appendChild(btn);
     buildBtns[key] = btn;
   }
 
   // hide the detail card when the pointer leaves the whole bar
   bar.addEventListener('mouseleave', () => detail.classList.add('hidden'));
-  // live filter
-  search.addEventListener('click', (e) => e.stopPropagation());
-  search.addEventListener('input', () => {
-    buildSearch = search.value.trim().toLowerCase();
-    refreshBuildBar(); // visibility is owned by refreshBuildBar (search AND unlocked)
-  });
 
   refreshBuildBar();
 
-  // render a 3D preview thumbnail for each building and slot it into the cards
-  void renderBuildingThumbnails(BUILD_KEYS, (key, url) => {
+  // render a 3D preview thumbnail for each building (incl. landmarks) into the cards
+  void renderBuildingThumbnails(ALL_KEYS, (key, url) => {
     thumbs[key] = url;
     const slot = buildBtns[key]?.querySelector('.bb-thumb');
     if (slot) slot.innerHTML = `<img src="${url}" alt="">`;
@@ -318,18 +395,39 @@ export function initBuildBar(): void {
 }
 
 export function refreshBuildBar(): void {
-  for (const key of BUILD_KEYS) {
+  for (const key of ALL_KEYS) {
     const def = DEFS[key];
     const btn = buildBtns[key];
     if (!btn) continue;
-    // Locked buildings (prereqs not finished) are hidden entirely; the search box
-    // can only narrow the already-unlocked set, never reveal a locked building.
-    const unlocked = prereqsMet(def);
-    const matches = !buildSearch || def.name.toLowerCase().includes(buildSearch);
-    btn.style.display = unlocked && matches ? '' : 'none';
-    btn.disabled = !canAfford(def.cost);
+    const cat = catOf[key];
+    const isLandmark = !!cat?.landmark;
+    const inActive = cat?.id === activeCat;
+    // Every building shows in its tab; locked ones (prereqs unmet) are greyed and
+    // their detail card lists what's still needed. Landmarks behave the same, but
+    // "unlocked" means their fixed-plot signpost is planted (the era gate), and the
+    // entry drops out once the landmark is actually placed (site/done).
+    let show: boolean, locked: boolean, disabled: boolean;
+    if (isLandmark) {
+      const placed = G.buildings.some((b) => b.plotKey === key && b.phase !== 'planned');
+      const unlocked = landmarkSignpost(key) !== null;
+      show = inActive && !placed;
+      locked = !unlocked;
+      disabled = unlocked && !canAfford(def.cost); // unlocked: gate on cost like the rest
+    } else {
+      const unlocked = prereqsMet(def);
+      show = inActive;
+      locked = !unlocked;
+      disabled = !locked && !canAfford(def.cost);
+    }
+    btn.style.display = show ? '' : 'none';
+    btn.classList.toggle('locked', locked);
+    // locked buttons stay enabled so hover still reveals the "Still need:" detail
+    // and their click toasts the requirement; cost-disabled ones are inert.
+    btn.disabled = disabled;
     btn.title = def.name;
   }
+  // reflect the active tab
+  for (const c of CATEGORIES) catTabs[c.id]?.classList.toggle('active', c.id === activeCat);
 }
 
 // what the selected villager(s) are doing — shown live under their name

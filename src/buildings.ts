@@ -4,7 +4,7 @@ import { surfaceHeight, flattenUnder } from './terrain';
 import { G, ResKind, RES_KINDS, GatherKind, pay, canAfford } from './state';
 import { woodMaterial, stoneMaterial, thatchMaterial, tileMaterial, plasterMaterial, earthMaterial, brickMaterial } from './materials';
 import { loadModel, fitModel, FitOpts } from './models';
-import { reseatNodesNear } from './world';
+import { reseatNodesNear, hideNode } from './world';
 import type { Villager } from './units';
 
 export type BuildingPhase = 'planned' | 'site' | 'done';
@@ -21,6 +21,7 @@ export interface BuildingDef {
   radius: number; // approach / footprint radius
   foodTrickle?: number; // food per second when complete
   coinTrickle?: number; // coin per second when complete (offerings, tolls)
+  waterTrickle?: number; // water per second when complete (wells — passive)
   // refining: every `interval` s, if `input` is affordable, consume it and add
   // `output` (a production chain — e.g. wood -> planks at the sawmill)
   produces?: { input: Partial<Record<ResKind, number>>; output: Partial<Record<ResKind, number>>; interval: number };
@@ -912,6 +913,295 @@ function buildStonecutter(g: THREE.Group): void {
   g.add(groundLitter(0, 0.4, 2.8, 22, M.stone));
 }
 
+// ---- industrial refineries (1880s–90s) -------------------------------------
+// Sinaia's first factories. A lime kiln (Costinescu's *var hidraulic* works) burns
+// quarried stone into mortar-lime; a nail forge (the 1892 *fabrică de cuie*) smelts
+// local ore into the ironwork that the railway and grand roofs demand.
+
+function buildLimeKiln(g: THREE.Group): void {
+  // a tapered stone kiln stack with a glowing stoke-arch at its foot, iron banding,
+  // a timber charging ramp to the top, limestone rubble and pale sacks of lime
+  const lower = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 2.4, 3.4, 12), M.stoneDark);
+  lower.position.y = 1.7; lower.castShadow = true; lower.receiveShadow = true; g.add(lower);
+  const upper = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.9, 1.7, 12), M.stone);
+  upper.position.y = 4.25; upper.castShadow = true; g.add(upper);
+  for (const [hy, r] of [[1.0, 2.2], [2.6, 1.95]] as const) {
+    const hoop = new THREE.Mesh(new THREE.TorusGeometry(r, 0.08, 5, 18), M.iron);
+    hoop.position.y = hy; hoop.rotation.x = Math.PI / 2; hoop.castShadow = true; g.add(hoop);
+  }
+  // stoke-arch (firing mouth) at the base on the +z side, with a glowing fire
+  g.add(box(1.4, 1.5, 0.7, M.stoneDark, 0, 0, 2.05));
+  g.add(box(0.8, 0.95, 0.4, M.fire, 0, 0.15, 2.35));
+  // a timber charging ramp rising to the kiln throat (limestone tipped in from above)
+  const ramp = box(2.0, 0.25, 5.0, M.log, -3.4, 2.0, 0);
+  ramp.rotation.z = 0.62; g.add(ramp);
+  for (const rz of [-1.8, 1.8]) g.add(cylinder(0.14, 2.4, M.logDark, -3.0, 0, rz));
+  // heaped limestone to one side, pale lime sacks and a barrow on the other
+  for (const [bx, by, bz, s] of [[3.0, 0, -1.4, 0.9], [3.6, 0, -0.7, 0.8], [3.2, 0.7, -1.1, 0.7]] as const)
+    g.add(box(s, s * 0.8, s, M.stone, bx, by, bz));
+  g.add(sack(2.8, 1.8, M.whitewash));
+  g.add(sack(3.4, 1.4, M.whitewash));
+  g.add(handcart(-2.6, 2.4, 0.4));
+  g.add(woodpile(0, -3.0, 0, 2.6)); // cordwood fuel for the burn
+  g.add(groundLitter(0, 0, 3.6, 26, M.whitewash)); // lime dust trodden white into the earth
+}
+
+function buildNailForge(g: THREE.Group): void {
+  // an open-fronted smithy: stone back wall and a tall hearth-chimney, a timber
+  // roof, an anvil on a block, a quenching trough, bar-iron stock and a keg of nails
+  const W = 4.6, D = 3.8, wallH = 2.5;
+  g.add(box(W + 0.5, 0.4, D + 0.5, M.stone, 0, 0, 0));
+  g.add(box(W, wallH, 0.6, M.stoneDark, 0, 0.4, -D / 2)); // back wall
+  g.add(box(0.6, wallH, D, M.stoneDark, -W / 2, 0.4, 0)); // one side wall
+  for (const sz of [-1, 1] as const) g.add(cylinder(0.18, wallH + 0.4, M.logDark, W / 2, 0.3, (sz * D) / 2));
+  const eaves = 0.4 + wallH;
+  g.add(tag(gableRoof(W, D, 1.6, M.shingle, 0, eaves, 0, 0.5, 0.45), 'roof'));
+  // the forge: a big stone hearth in the back corner under a tall chimney, roaring
+  g.add(box(1.2, 1.0, 1.0, M.stoneDark, -W / 2 + 0.9, 0, -D / 2 + 0.9));
+  g.add(box(0.8, 0.6, 0.7, M.fire, -W / 2 + 0.9, 0.55, -D / 2 + 1.1));
+  g.add(chimney(M.stone, -W / 2 + 0.9, eaves - 0.3, -D / 2 + 0.9, 3.6, 0.95));
+  // anvil on an oak block, set out in the open front
+  g.add(cylinder(0.36, 0.62, M.logDark, 0.7, 0, 0.8));
+  g.add(box(0.78, 0.24, 0.34, M.iron, 0.7, 0.62, 0.8));
+  g.add(box(0.34, 0.18, 0.3, M.iron, 1.05, 0.74, 0.8)); // the horn
+  // slack-tub for quenching the hot iron
+  g.add(box(1.2, 0.46, 0.52, M.logDark, 1.9, 0, -0.7));
+  g.add(box(1.02, 0.1, 0.36, M.glass, 1.9, 0.36, -0.7)); // water
+  // bar-iron stock leaning against the side wall, kegs of finished nails
+  for (let i = 0; i < 5; i++) {
+    const bar = box(0.07, 2.3, 0.07, M.iron, -W / 2 + 0.4 + i * 0.1, 0, 1.5);
+    bar.rotation.z = 0.16; g.add(bar);
+  }
+  g.add(barrel(W / 2 + 0.7, 1.5, 0.85));
+  g.add(box(0.55, 0.5, 0.55, M.iron, W / 2 + 0.4, 0, 0.4)); // a keg of nails
+  g.add(woodpile(-W / 2 - 0.5, -2.0, Math.PI / 2, 2.0)); // charcoal billets
+  g.add(groundLitter(0.8, 0.5, 2.6, 18, M.iron)); // hammer-scale and clinker
+}
+
+// ---- Era 2 royal-core landmarks (1866–1903) --------------------------------
+// Bespoke procedural masses, like the monastery — they keep their hand-built look
+// rather than re-skinning by era. Peleș and the Royal Station are the marquee
+// builds; the estate cluster (Foișor, Economat, Casa Cavalerilor, the guard house)
+// rings the castle as it really did on the hillside above the town.
+
+function buildPeles(g: THREE.Group): void {
+  // King Carol's German-Renaissance summer castle: a tall asymmetric mass of
+  // whitewashed walls, steep grey slate roofs, half-timbered gables, a soaring
+  // clock-and-bell tower with a spire, corner turrets and a terraced forecourt.
+  const slate = M.roofGray, plaster = M.whitewash, timber = M.logDark;
+  // broad stone terrace/plinth the castle stands on
+  g.add(box(16, 0.7, 11, M.stone, 0, -0.2, 0));
+  g.add(box(15, 0.4, 10, M.dirt, 0, 0.5, 0)); // courtyard floor
+  // --- main two-storey block ---
+  const MW = 11, MD = 7, h1 = 3.6, h2 = 3.2;
+  g.add(box(MW, h1, MD, plaster, -1, 0.5, -0.5));
+  g.add(box(MW + 0.4, 0.4, MD + 0.4, timber, -1, 0.5 + h1, -0.5)); // floor band
+  g.add(box(MW - 0.4, h2, MD - 0.4, plaster, -1, 0.5 + h1 + 0.4, -0.5));
+  // half-timbering on the upper storey (corner posts + braces)
+  for (const sx of [-1, 1] as const) for (const sz of [-1, 1] as const)
+    g.add(box(0.3, h2, 0.3, timber, -1 + (sx * (MW - 0.4)) / 2, 0.5 + h1 + 0.4, -0.5 + (sz * (MD - 0.4)) / 2));
+  // steep slate gable roof with deep eaves + ridge
+  const mEave = 0.5 + h1 + 0.4 + h2;
+  g.add(gableRoof(MW, MD, 4.4, slate, -1, mEave, -0.5, 0.7, 0.8));
+  g.add(box(0.3, 0.3, MD + 1.6, timber, -1, mEave + 4.2, -0.5));
+  // dormers on the front slope
+  for (const dx of [-3.5, 1.5]) {
+    g.add(box(1.4, 1.3, 1.2, plaster, -1 + dx, mEave - 0.2, MD / 2 - 1.2));
+    g.add(gableRoof(1.4, 1.2, 0.9, slate, -1 + dx, mEave + 1.1, MD / 2 - 1.2, 0.25, 0.25));
+    g.add(box(0.9, 0.95, 0.1, M.glass, -1 + dx, mEave - 0.05, MD / 2 - 0.6));
+  }
+  // rows of tall windows, both storeys, front (+z) and gable ends
+  for (const wx of [-5, -2.6, -0.2, 2.2, 4.0]) {
+    g.add(box(1.1, 1.7, 0.12, M.glass, wx - 1, 1.1, MD / 2 - 0.45)); // ground
+    g.add(box(1.0, 1.4, 0.12, M.glass, wx - 1, 5.0, (MD - 0.4) / 2 - 0.25)); // upper
+  }
+  // --- the great clock/bell tower (front-left), the castle's signature ---
+  const tx = -7.5, tz = 1.8, tw = 3.6, tH = 12.5;
+  g.add(box(tw, tH, tw, plaster, tx, 0.5, tz));
+  for (const sx of [-1, 1] as const) for (const sz of [-1, 1] as const) // quoined corners
+    g.add(box(0.4, tH, 0.4, M.stone, tx + (sx * tw) / 2, 0.5, tz + (sz * tw) / 2));
+  // a clock face high on the +z side
+  const clock = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.16, 16), M.whitewash);
+  clock.rotation.x = Math.PI / 2; clock.position.set(tx, 10.4, tz + tw / 2 + 0.05); g.add(clock);
+  g.add(box(0.12, 0.5, 0.06, timber, tx, 10.4, tz + tw / 2 + 0.16));
+  g.add(box(0.4, 0.1, 0.06, timber, tx + 0.12, 10.4, tz + tw / 2 + 0.16));
+  // belfry windows + steep spire + gold finial
+  for (const s of [-1, 1] as const) g.add(box(0.9, 1.6, 0.12, M.glass, tx + s * (tw / 2 + 0.0), tH - 1.6, tz));
+  const spire = new THREE.Mesh(new THREE.ConeGeometry(2.7, 5.2, 8), slate);
+  spire.position.set(tx, 0.5 + tH + 2.6, tz); spire.rotation.y = Math.PI / 8; spire.castShadow = true; g.add(spire);
+  g.add(cylinder(0.12, 1.2, M.gold, tx, 0.5 + tH + 5.0, tz));
+  const finial = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), M.gold);
+  finial.position.set(tx, 0.5 + tH + 6.0, tz); g.add(finial);
+  // --- a lower side wing (right) with its own steep roof ---
+  const WW = 6, WD = 5.5, wH = 4.6;
+  g.add(box(WW, wH, WD, plaster, 6.5, 0.5, -1.0));
+  g.add(gableRoof(WD, WW, 2.8, slate, 6.5, 0.5 + wH, -1.0, 0.6, 0.6).rotateY(Math.PI / 2));
+  for (const wz of [-2.0, 0, 2.0]) g.add(box(0.12, 1.5, 0.95, M.glass, 6.5 + WW / 2 + 0.0, 1.6, -1.0 + wz));
+  // a slim corner turret where wing meets the main block
+  g.add(cylinder(1.1, 9.5, plaster, 3.4, 0.5, -3.4));
+  const turretRoof = new THREE.Mesh(new THREE.ConeGeometry(1.5, 3.0, 12), slate);
+  turretRoof.position.set(3.4, 0.5 + 9.5 + 1.5, -3.4); turretRoof.castShadow = true; g.add(turretRoof);
+  g.add(cylinder(0.1, 1.0, M.gold, 3.4, 0.5 + 9.5 + 3.0, -3.4)); // turret finial (secular — no cross)
+  // --- terraced forecourt: balustrade, stairs, a fountain, lamp posts ---
+  for (const bx of [-6, -3, 0, 3]) g.add(box(0.5, 1.0, 0.5, M.stone, bx, 0.5, MD / 2 + 2.6)); // balusters
+  g.add(box(13, 0.3, 0.6, M.stone, -1, 1.5, MD / 2 + 2.6)); // balustrade rail
+  for (let i = 0; i < 3; i++) g.add(box(4, 0.25, 0.8, M.stone, -1, 0.5 - i * 0.25, MD / 2 + 3.2 + i * 0.8)); // stairs
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 0.5, 16), M.stone);
+  basin.position.set(-1, 0.75, MD / 2 + 5.2); basin.castShadow = true; g.add(basin);
+  g.add(cylinder(1.15, 0.4, M.glass, -1, 0.8, MD / 2 + 5.2));
+  g.add(lanternPost(-6.5, MD / 2 + 4.0));
+  g.add(lanternPost(4.5, MD / 2 + 4.0));
+}
+
+function buildRoyalStation(g: THREE.Group): void {
+  // the Royal Station: a long whitewashed hall with a tiled gable, a central
+  // clock-gable bay, and a glazed iron platform canopy over the rails on the
+  // track (−x) side, where the royal train drew in below Peleș.
+  const W = 13, D = 5.5, wallH = 4.2, plaster = M.whitewash, tile = M.roofRed;
+  g.add(box(W + 0.8, 0.5, D + 0.8, M.stone, 0, 0, 0));
+  g.add(box(W, wallH, D, plaster, 0, 0.5, 0));
+  // stone pilasters articulating the long platform front
+  for (const px of [-5.5, -3, -0.5, 2, 4.5]) g.add(box(0.5, wallH, 0.4, M.stone, px, 0.5, D / 2));
+  // long hipped/gabled tile roof + ridge
+  const eave = 0.5 + wallH;
+  g.add(gableRoof(D, W, 2.4, tile, 0, eave, 0, 0.6, 0.7).rotateY(Math.PI / 2));
+  // central clock-gable bay, stepped forward, taller
+  g.add(box(4.2, wallH + 1.4, D + 0.8, plaster, 0, 0.5, 0.2));
+  g.add(gableRoof(4.2, D + 0.8, 1.9, tile, 0, 0.5 + wallH + 1.4, 0.2, 0.5, 0.5));
+  const clock = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.16, 16), M.stone);
+  clock.rotation.x = Math.PI / 2; clock.position.set(0, 0.5 + wallH + 0.9, D / 2 + 0.65); g.add(clock);
+  g.add(box(0.1, 0.42, 0.06, M.iron, 0, 0.5 + wallH + 0.9, D / 2 + 0.74));
+  // arched doorway + a row of tall platform windows
+  g.add(box(1.6, 2.6, 0.2, M.logDark, 0, 0.5, D / 2 + 0.4));
+  g.add(box(1.2, 2.1, 0.14, M.glass, 0, 0.6, D / 2 + 0.5));
+  for (const wx of [-5.2, -3.0, 3.0, 5.2]) g.add(box(1.2, 2.0, 0.12, M.glass, wx, 1.2, D / 2 + 0.46));
+  // --- glazed iron platform canopy over the rails (−x side) ---
+  const canY = 3.6, canX = -W / 2 - 3.2;
+  for (const cz of [-5, -1.5, 2, 5]) g.add(cylinder(0.12, canY, M.iron, canX, 0, cz)); // outer colonnade
+  g.add(box(3.4, 0.18, W - 1, M.iron, canX + 0.2, canY, 0)); // canopy deck
+  g.add(box(3.4, 0.1, W - 1, M.glass, canX + 0.2, canY + 0.18, 0)); // glazing
+  // a decorative valance hanging from the canopy lip
+  g.add(box(0.1, 0.5, W - 1, M.iron, canX - 1.5, canY - 0.25, 0));
+  // --- the rails: sleepers + two iron rails running along z ---
+  for (let i = -6; i <= 6; i++) g.add(box(2.6, 0.12, 0.4, M.logDark, canX, -0.1, i * 1.0));
+  for (const rx of [-0.8, 0.8]) g.add(box(0.12, 0.16, 13, M.iron, canX + rx, 0.0, 0));
+  // a cast-iron buffer-stop at the platform end, lamps, a luggage cart
+  g.add(box(1.4, 1.0, 0.6, M.iron, canX, 0, 6.2));
+  g.add(lanternPost(-2.0, D / 2 + 1.2));
+  g.add(lanternPost(4.0, D / 2 + 1.2));
+  g.add(handcart(5.6, D / 2 + 1.0, 0.3));
+  g.add(crate(6.4, D / 2 + 1.6, -0.3));
+}
+
+function buildFoisor(g: THREE.Group): void {
+  // Foișor: the royal hunting lodge — a tall alpine chalet of stone footing and
+  // log storeys under a very steep shingle roof, with a carved gallery-balcony
+  // and antlers over the door. The court lived here while Peleș was built.
+  const W = 7, D = 5.5;
+  g.add(box(W + 0.6, 1.8, D + 0.6, M.stone, 0, 0, 0)); // tall stone ground floor
+  g.add(box(W, 2.6, D, M.log, 0, 1.8, 0)); // log upper storey
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const)
+    g.add(cylinder(0.22, 4.6, M.logDark, (sx * W) / 2, 0, (sz * D) / 2));
+  // jettied gallery-balcony around the front, with turned balusters
+  g.add(box(W + 1.6, 0.3, 1.4, M.log, 0, 1.7, D / 2 + 0.4));
+  for (let i = -3; i <= 3; i++) g.add(cylinder(0.07, 1.0, M.logDark, i * 1.0, 1.9, D / 2 + 1.0));
+  g.add(box(W + 1.6, 0.14, 0.14, M.log, 0, 2.9, D / 2 + 1.0));
+  // very steep shingle roof with deep eaves + ridge + king-post gable
+  const eave = 1.8 + 2.6;
+  g.add(gableRoof(W, D, 4.0, M.shingle, 0, eave, 0, 0.8, 0.9));
+  g.add(box(0.24, 0.24, D + 2.0, M.logDark, 0, eave + 3.8, 0));
+  g.add(box(0.2, 1.4, 0.26, M.logDark, 0, eave, D / 2 + 0.9));
+  // door with an antler trophy, shuttered windows
+  g.add(door(0, 1.8, D / 2 + 0.02, M.logDark, M.shingle));
+  for (const sx of [-1, 1] as const) {
+    const antler = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.7, 5), M.sack);
+    antler.position.set(sx * 0.3, 3.7, D / 2 + 0.1); antler.rotation.z = sx * 0.7; g.add(antler);
+  }
+  g.add(windowSh(W / 2 + 0.02, 2.7, -1.2, M.logDark, M.glass));
+  g.add(windowSh(-W / 2 - 0.02, 2.7, 1.2, M.logDark, M.glass));
+  g.add(chimney(M.stone, -W / 2 + 0.6, eave, -D / 2 + 0.6, 2.8, 0.7));
+  g.add(woodpile(W / 2 + 1.4, -1.0, 0, 2.4));
+  g.add(lanternPost(-W / 2 - 1.2, D / 2 + 1.2));
+}
+
+function buildEconomat(g: THREE.Group): void {
+  // the Economat: the estate's administration and stores, a long neo-Romanian
+  // block — whitewashed, an arcaded ground-floor loggia, a red-tiled roof and a
+  // small stair-tower at one end.
+  const W = 10, D = 5.5, h1 = 3.0, h2 = 2.6;
+  g.add(box(W + 0.5, 0.5, D + 0.5, M.stone, 0, 0, 0));
+  g.add(box(W, h1, D, M.whitewash, 0, 0.5, 0));
+  g.add(box(W + 0.3, 0.3, D + 0.3, M.stone, 0, 0.5 + h1, 0)); // floor cornice
+  g.add(box(W - 0.2, h2, D - 0.2, M.whitewash, 0, 0.5 + h1 + 0.3, 0));
+  // arcaded loggia along the +z front: stone piers + round arches
+  for (const px of [-4, -2, 0, 2, 4]) {
+    g.add(box(0.5, h1, 0.5, M.stone, px, 0.5, D / 2 + 0.1));
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.22, 6, 12, Math.PI), M.stone);
+    arch.position.set(px + 1, 0.5 + h1 - 0.6, D / 2 + 0.1); arch.castShadow = true; g.add(arch);
+  }
+  // upper windows + tiled gable roof
+  for (const wx of [-3.6, -1.2, 1.2, 3.6]) g.add(box(0.9, 1.3, 0.12, M.glass, wx, 4.4, D / 2 + 0.0));
+  const eave = 0.5 + h1 + 0.3 + h2;
+  g.add(gableRoof(W, D, 2.4, M.roofRed, 0, eave, 0, 0.6, 0.6));
+  g.add(box(0.24, 0.24, D + 1.2, M.logDark, 0, eave + 2.3, 0));
+  // a square stair-tower at the −x end, taller, with a pyramidal cap
+  g.add(box(3, eave + 1.6, 3, M.whitewash, -W / 2 + 0.5, 0.5, 0));
+  g.add(pyramid(2.4, 2.0, M.roofRed, -W / 2 + 0.5, 0.5 + eave + 1.6, 0));
+  g.add(box(0.8, 1.4, 0.12, M.glass, -W / 2 + 0.5, 4.6, D / 2 - 1.0));
+  g.add(barrel(W / 2 + 1.0, 1.4));
+  g.add(crate(W / 2 + 0.8, 2.2, 0.3));
+  g.add(handcart(-W / 2 - 1.6, -1.0, 0.4));
+}
+
+function buildCavalerilor(g: THREE.Group): void {
+  // Casa Cavalerilor: lodging for the court's gentlemen — a trim two-storey
+  // whitewashed villa with a tiled hip roof, a central balcony and shuttered
+  // windows ranked symmetrically.
+  const W = 8, D = 6, h1 = 3.0, h2 = 2.8;
+  g.add(box(W + 0.5, 0.5, D + 0.5, M.stone, 0, 0, 0));
+  g.add(box(W, h1, D, M.whitewash, 0, 0.5, 0));
+  g.add(box(W + 0.3, 0.3, D + 0.3, M.stone, 0, 0.5 + h1, 0));
+  g.add(box(W, h2, D, M.whitewash, 0, 0.5 + h1 + 0.3, 0));
+  // pyramidal tiled roof
+  const eave = 0.5 + h1 + 0.3 + h2;
+  g.add(pyramid(Math.max(W, D) * 0.62, 2.6, M.roofRed, 0, eave, 0));
+  // central first-floor balcony over the door
+  g.add(box(3.0, 0.25, 1.2, M.stone, 0, 0.5 + h1, D / 2 + 0.4));
+  for (let i = -2; i <= 2; i++) g.add(cylinder(0.06, 0.8, M.whitewash, i * 0.6, 0.5 + h1 + 0.25, D / 2 + 0.9));
+  g.add(box(3.0, 0.12, 0.12, M.stone, 0, 0.5 + h1 + 1.05, D / 2 + 0.9));
+  g.add(door(0, 0.5, D / 2 + 0.02, M.logDark, M.shingle));
+  // ranked shuttered windows, both storeys, front and sides
+  for (const wx of [-2.6, 2.6]) g.add(box(1.0, 1.4, 0.12, M.glass, wx, 1.4, D / 2 + 0.02));
+  for (const wx of [-2.6, 0, 2.6]) g.add(box(1.0, 1.3, 0.12, M.glass, wx, 4.5, D / 2 + 0.02));
+  g.add(windowSh(W / 2 + 0.02, 1.5, -1.5, M.logDark, M.glass));
+  g.add(windowSh(W / 2 + 0.02, 1.5, 1.5, M.logDark, M.glass));
+  g.add(chimney(M.stone, -W / 2 + 1.0, eave - 0.4, -D / 2 + 1.0, 2.2, 0.6));
+  g.add(lanternPost(-1.8, D / 2 + 1.0));
+  g.add(lanternPost(1.8, D / 2 + 1.0));
+}
+
+function buildGuard(g: THREE.Group): void {
+  // Corpul de Gardă: the little stone guard house at the estate gate — a compact
+  // tower-like block with a steep tiled roof, a sentry arch and a flagstaff. Its
+  // sentries keep wolves off the royal grounds.
+  const W = 4.2, D = 4.2, wallH = 3.4;
+  g.add(box(W + 0.6, 0.6, D + 0.6, M.stone, 0, 0, 0));
+  g.add(box(W, wallH, D, M.stone, 0, 0.6, 0));
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) // quoined corners
+    g.add(box(0.4, wallH, 0.4, M.stoneDark, (sx * W) / 2, 0.6, (sz * D) / 2));
+  g.add(box(W + 0.4, 0.35, D + 0.4, M.stoneDark, 0, 0.6 + wallH, 0)); // cornice
+  g.add(pyramid(W * 0.82, 2.4, M.roofRed, 0, 0.6 + wallH + 0.35, 0));
+  // sentry archway + a small barred window
+  g.add(box(1.3, 2.2, 0.3, M.logDark, 0, 0.6, D / 2 + 0.0));
+  g.add(box(1.0, 1.9, 0.14, M.shingle, 0, 0.7, D / 2 + 0.1));
+  g.add(box(0.9, 0.9, 0.12, M.glass, W / 2 + 0.02, 2.0, 0));
+  // flagstaff with a red standard
+  const poleX = W / 2 + 1.0, poleZ = -D / 2 + 0.4;
+  g.add(cylinder(0.1, 6.0, M.logDark, poleX, 0, poleZ));
+  g.add(box(0.06, 1.1, 1.6, M.cloth, poleX + 0.04, 4.6, poleZ + 0.8));
+  g.add(lanternPost(-W / 2 - 1.0, D / 2 + 0.8));
+}
+
 export const DEFS: Record<string, BuildingDef> = {
   camp: {
     key: 'camp', name: 'Founders’ Hall', desc: 'The first hearth of the valley — the heart of the settlement. Drop off resources, shelter new settlers, and ward off wolves and bears nearby.',
@@ -952,11 +1242,10 @@ export const DEFS: Record<string, BuildingDef> = {
     build: buildQuarry,
   },
   forager: {
-    key: 'forager', name: 'Forager’s Hut',
-    desc: 'Berry-pickers’ camp. Its foragers gather berries from nearby thickets.',
-    cost: { wood: 30 }, buildPoints: 26, popCap: 0, isDropoff: true, trains: false, radius: 4.5,
-    requires: ['hut', 'lumbercamp'],
-    boosts: 'food', boostRange: 40, jobSlots: 2,
+    key: 'forager', name: 'Fântână (Well)',
+    desc: 'A village well. Draws fresh water for the townsfolk — vital for the population to thrive.',
+    cost: { wood: 30 }, buildPoints: 26, popCap: 0, isDropoff: false, trains: false, radius: 4.5,
+    waterTrickle: 0.5, // supplies water passively once built (no workers needed)
     model: { url: '/models/kaykit/well.gltf.glb', fitRadius: 4.5 },
     build: buildForager,
   },
@@ -1005,6 +1294,22 @@ export const DEFS: Record<string, BuildingDef> = {
     model: { url: '/models/kaykit/market.gltf.glb', fitRadius: 5 },
     build: buildStonecutter,
   },
+  limekiln: {
+    key: 'limekiln', name: 'Lime Kiln',
+    desc: 'Costinescu’s var hidraulic works — quarried stone is burnt to quicklime, the mortar that binds the grand stone landmarks.',
+    cost: { wood: 45, stone: 30 }, buildPoints: 48, popCap: 0, isDropoff: false, trains: false, radius: 5.5,
+    requires: ['quarry'],
+    produces: { input: { stone: 2 }, output: { lime: 1 }, interval: 3 }, jobSlots: 2,
+    build: buildLimeKiln,
+  },
+  nailforge: {
+    key: 'nailforge', name: 'Nail Forge',
+    desc: 'The 1892 fabrică de cuie — a charcoal-fired smithy that smelts local ore into the nails and ironwork the railway and great roofs demand.',
+    cost: { wood: 50, stone: 35 }, buildPoints: 52, popCap: 0, isDropoff: false, trains: false, radius: 5,
+    requires: ['quarry', 'lumbercamp'],
+    produces: { input: { wood: 1, stone: 2 }, output: { nails: 1 }, interval: 3.5 }, jobSlots: 2,
+    build: buildNailForge,
+  },
   bridge: {
     key: 'bridge', name: 'Bridge',
     desc: 'A timber crossing over the Prahova, linking the two banks. Place it across the river.',
@@ -1035,9 +1340,59 @@ export const DEFS: Record<string, BuildingDef> = {
   oldinn: {
     key: 'oldinn', name: 'Pilgrims’ Inn', desc: 'Lodging for travelers crossing the Predeal pass — their tolls swell the treasury. Its fine carpentry calls for sawn planks.',
     cost: { wood: 100, stone: 50, planks: 24, block: 12, coin: 60 }, buildPoints: 120, popCap: 4, isDropoff: false, trains: false, radius: 7,
+    requires: ['monastery'], // shown greyed in the Landmarks tab until the monastery stands
     coinTrickle: 0.7,
     model: { url: '/models/kaykit/market.gltf.glb', fitRadius: 7 },
     build: buildInn,
+  },
+  // ---- Era 2 royal core (1866–1903) — bespoke procedural masses, no glTF ----
+  station: {
+    key: 'station', name: 'Royal Railway Station',
+    desc: 'The Ploiești–Predeal line reaches Sinaia (1870). A glazed iron canopy shelters the platform where the royal train draws in — its ironwork calls for forged nails.',
+    cost: { wood: 120, stone: 120, planks: 50, block: 30, nails: 40, coin: 40 }, buildPoints: 240, popCap: 0, isDropoff: false, trains: false, radius: 12,
+    flatRadius: 24,
+    requires: ['nailforge', 'sawmill'],
+    coinTrickle: 0.6, // fares and trade flowing through the station
+    build: buildRoyalStation,
+  },
+  foisor: {
+    key: 'foisor', name: 'Foișor Lodge',
+    desc: 'The royal hunting lodge (1878–81) where the court lived while Peleș rose. A tall log chalet of sawn timber and forged ironwork.',
+    cost: { wood: 170, planks: 60, block: 20, nails: 25, coin: 30 }, buildPoints: 200, popCap: 6, isDropoff: false, trains: false, radius: 11,
+    requires: ['sawmill', 'nailforge'],
+    build: buildFoisor,
+  },
+  economat: {
+    key: 'economat', name: 'Economat',
+    desc: 'The estate’s administration and stores (c. 1900), a neo-Romanian block whose masonry is bound with burnt lime.',
+    cost: { wood: 90, stone: 130, planks: 30, block: 40, lime: 30 }, buildPoints: 190, popCap: 4, isDropoff: false, trains: false, radius: 10,
+    requires: ['limekiln', 'stonecutter'],
+    coinTrickle: 0.3, // the estate office keeps the books
+    build: buildEconomat,
+  },
+  cavalerilor: {
+    key: 'cavalerilor', name: 'Casa Cavalerilor',
+    desc: 'Lodging for the court’s gentlemen-in-waiting — a trim whitewashed villa of dressed stone and lime mortar.',
+    cost: { wood: 90, stone: 100, planks: 30, block: 30, lime: 20 }, buildPoints: 175, popCap: 5, isDropoff: false, trains: false, radius: 9,
+    requires: ['limekiln', 'stonecutter'],
+    build: buildCavalerilor,
+  },
+  guard: {
+    key: 'guard', name: 'Corpul de Gardă',
+    desc: 'The stone guard house at the estate gate. Its sentries keep wolves and bears off the royal grounds.',
+    cost: { wood: 50, stone: 75, block: 20, lime: 12 }, buildPoints: 130, popCap: 0, isDropoff: false, trains: false, radius: 8,
+    requires: ['stonecutter'],
+    defendRange: 42, defendDps: 12,
+    build: buildGuard,
+  },
+  peles: {
+    key: 'peles', name: 'Peleș Castle',
+    desc: 'King Carol I’s German-Renaissance summer castle (1873–83) — the crown of the valley. Its towers, slate roofs and ironwork demand lime, blocks, planks and forged nails in abundance.',
+    cost: { wood: 300, stone: 280, planks: 120, block: 90, lime: 80, nails: 70, coin: 150 }, buildPoints: 640, popCap: 8, isDropoff: false, trains: false, radius: 20,
+    flatRadius: 32,
+    requires: ['limekiln', 'nailforge', 'stonecutter', 'sawmill'],
+    coinTrickle: 1.4, // the royal court and the visitors it draws
+    build: buildPeles,
   },
 };
 
@@ -1056,6 +1411,7 @@ export class Building {
   trainQueue: number[] = []; // remaining seconds per queued villager
   foodAccum = 0;
   coinAccum = 0;
+  waterAccum = 0;
   prodAccum = 0;
   producing = false; // a refining building actively converting (vs waiting on inputs)
   workers: Villager[] = []; // villagers assigned to this workplace
@@ -1120,8 +1476,16 @@ export class Building {
     const flatR = this.def.flatRadius ?? Math.max(this.def.radius + 16, 18);
     const reach = flatR * 1.9 + 1;
     flattenUnder(this.x, this.z, flatR);
-    // trees/rocks/berries near the footprint had their height baked in before
-    // the reshape — drop them back onto the new surface so nothing floats
+    // Clear the forest off the levelled plot — expanding the town carves a clearing
+    // out of the woods. Trees and bushes inside the flat shelf are removed; ROCKS
+    // are left standing (they block placement instead — mined, never bulldozed).
+    const clearR2 = flatR * flatR;
+    for (const n of G.nodes) {
+      if (!n.alive || n.kind === 'stone') continue;
+      if ((n.x - this.x) ** 2 + (n.z - this.z) ** 2 < clearR2) { n.alive = false; hideNode(n); }
+    }
+    // trees/rocks/berries just beyond the cleared shelf had their height baked in
+    // before the reshape — drop the survivors onto the new surface so none float
     reseatNodesNear(this.x, this.z, reach);
     // the ground is now level at ~the centre height; sit the building on it with
     // no extra lift (the old terrace lift is no longer needed)
@@ -1290,6 +1654,14 @@ export class Building {
         const whole = Math.floor(this.coinAccum);
         this.coinAccum -= whole;
         G.resources.coin += whole;
+      }
+    }
+    if (this.def.waterTrickle) { // wells supply water passively once built
+      this.waterAccum += this.def.waterTrickle * dt;
+      if (this.waterAccum >= 1) {
+        const whole = Math.floor(this.waterAccum);
+        this.waterAccum -= whole;
+        G.resources.water += whole;
       }
     }
     // refining: turn raw resources into finished goods on a timer, if the inputs

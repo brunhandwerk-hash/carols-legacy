@@ -46,6 +46,10 @@ function hasBridge(): boolean {
   );
 }
 
+function builtDone(key: string): boolean {
+  return G.buildings.some((b) => b.phase === 'done' && b.def.key === key);
+}
+
 export const ERAS: Era[] = [
   {
     yearLabel: 'Anno 1690', enterYear: 1690,
@@ -77,9 +81,15 @@ export const ERAS: Era[] = [
     yearLabel: 'Anno 1866', enterYear: 1866,
     name: 'The King Arrives',
     introTitle: 'A Prince at the Monastery Gate',
-    introText: 'August 1866. Prince Carol of Hohenzollern, newly called to Romania’s throne, lodges at the monastery — and falls in love with the valley. The treasury you have built will fund his summer castle, the grand hotels, and the casino to come. (This chapter is still being written…)',
+    introText: 'August 1866. Prince Carol of Hohenzollern, newly called to Romania’s throne, lodges at the monastery — and falls in love with the valley. First bring industry to the town: a lime kiln and a nail forge to feed the railway and the castle. Then raise the Royal Station, the lodge and estate houses, and at last Peleș itself.',
     objectives: [
-      obj('wip', 'To be continued — the Peleș era is under construction', () => false),
+      obj('industry', 'Bring industry to Sinaia — raise a Lime Kiln and a Nail Forge', () => builtDone('limekiln') && builtDone('nailforge')),
+      obj('station', 'Build the Royal Railway Station to bring the King’s train', () => landmarkDone('station')),
+      obj('foisor', 'Raise Foișor Lodge for the royal household', () => landmarkDone('foisor')),
+      obj('estate', 'Complete the estate service buildings (Economat, Casa Cavalerilor, Corpul de Gardă)',
+        () => landmarkDone('economat') && landmarkDone('cavalerilor') && landmarkDone('guard')),
+      obj('peles', 'Build Peleș Castle — the crown of the valley', () => landmarkDone('peles')),
+      obj('pop30', 'Grow the town to 30 souls', () => pop() >= 30),
     ],
   },
 ];
@@ -97,17 +107,33 @@ function spawnEraPlots(eraIdx: number): void {
   if (!sceneRef) return;
   for (const p of PLOTS) {
     if (p.era !== eraIdx) continue;
-    if (!DEFS[p.key]) continue; // later-era landmarks not yet implemented
-    if (G.buildings.some((b) => b.plotKey === p.key)) continue;
-    const b = new Building(p.key, p.x, p.z, 'planned', sceneRef);
-    b.plotKey = p.key;
+    spawnPlot(p.key);
   }
+}
+
+// drop a single landmark's 'planned' signpost on the map (idempotent). Returns
+// true only the first time it actually spawns, so callers can announce it once.
+function spawnPlot(key: string): boolean {
+  if (!sceneRef) return false;
+  const p = PLOTS.find((pp) => pp.key === key);
+  if (!p || !DEFS[key]) return false;                       // later-era landmarks not yet implemented
+  if (G.buildings.some((b) => b.plotKey === key)) return false;
+  const b = new Building(key, p.x, p.z, 'planned', sceneRef);
+  b.plotKey = key;
+  return true;
 }
 
 let bannerCooldown = 0;
 
 export function updateEras(dt: number): void {
   bannerCooldown -= dt;
+  // The Pilgrims' Inn sits right beside the monastery, so make it buildable the
+  // moment the monastery stands — rather than waiting for the whole era to turn
+  // over. (Landmarks are placed by clicking their signpost, not from the build
+  // bar, so without this the player has no way to start it.)
+  if (landmarkDone('monastery') && spawnPlot('oldinn')) {
+    toast('The Pilgrims’ Inn can now be raised beside the monastery — select its signpost to begin.');
+  }
   const era = ERAS[G.eraIndex];
   let changed = false;
   for (const o of era.objectives) {

@@ -6,6 +6,9 @@ Browser RTS about Sinaia, Romania (1690–1947): the town grows from forest haml
 - `npm run dev` — Vite dev server (port 5173)
 - `npm run build` — type-check (`tsc --noEmit`) + production build
 
+## Workflow
+- **Commit successful implementations**: once a change is complete and verified (`npm run build` passes, behaviour confirmed), commit it to `main` with a descriptive message. Don't leave finished, working features sitting uncommitted in the working tree.
+
 ## Design rules
 - **History first**: landmark buildings stand on fixed plots ([src/plots.ts](src/plots.ts)) matching real Sinaia geography. Dates/events come from [docs/research-sinaia.md](docs/research-sinaia.md) — check it before adding eras or buildings.
 - **Conflict** is historical events only (WWI 1916 defense chapter), never a rival AI base.

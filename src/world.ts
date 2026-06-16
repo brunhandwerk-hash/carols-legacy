@@ -112,7 +112,28 @@ const CLEARING_GEOS = [
   { lat: 45.3560, lon: 25.5660, r: 130 },  // lower Baiu poiana (Cumpatu side)
 ];
 
+// Irregular meadows traced as real outlines: each is an ordered ring of
+// [lat, lon] vertices (WGS84, ≥3 points, auto-closed). Resolved to world polygons
+// at scatter time and tested with point-in-polygon (see inClearing). Paste new
+// poieni here — keep them inside the playable DEM (≈45.32–45.385 N, 25.50–25.58 E).
+const CLEARING_POLYS: { name: string; ring: [number, number][] }[] = [
+  // example irregular poieni (replace/extend with real traced outlines)
+  { name: 'Poiana Ursului', ring: [
+    [45.3648, 25.5292], [45.3652, 25.5305], [45.3645, 25.5314],
+    [45.3638, 25.5312], [45.3634, 25.5318], [45.3630, 25.5305], [45.3635, 25.5293],
+  ] },
+  { name: 'Poiana Cerbului', ring: [
+    [45.3370, 25.5422], [45.3373, 25.5436], [45.3364, 25.5444],
+    [45.3354, 25.5440], [45.3351, 25.5429], [45.3358, 25.5419],
+  ] },
+  { name: 'Poiana Izvorului', ring: [
+    [45.3298, 25.5442], [45.3301, 25.5456], [45.3292, 25.5463],
+    [45.3283, 25.5459], [45.3280, 25.5448], [45.3287, 25.5438],
+  ] },
+];
+
 let clearings: { x: number; z: number; r: number }[] = [];
+let clearingPolys: { x: number; z: number }[][] = []; // CLEARING_POLYS resolved to world coords
 
 // The forest is one card-tree InstancedMesh per ~512 m chunk (frustum-culled as a
 // unit). A chunk renders only within a generous radius of the camera's look-at
@@ -142,10 +163,23 @@ export function updateForestReveal(camX = Infinity, camZ = Infinity, camDist = 6
   }
 }
 
+// ray-cast point-in-polygon (even-odd rule); ring is a closed loop of world points
+function inPolygon(x: number, z: number, ring: { x: number; z: number }[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i], b = ring[j];
+    if ((a.z > z) !== (b.z > z) && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
 function inClearing(x: number, z: number): boolean {
   for (const c of clearings) {
     const dx = x - c.x, dz = z - c.z;
     if (dx * dx + dz * dz < c.r * c.r) return true;
+  }
+  for (const ring of clearingPolys) {
+    if (ring.length >= 3 && inPolygon(x, z, ring)) return true;
   }
   return false;
 }
@@ -210,6 +244,18 @@ function forestClump(x: number, z: number): number {
        + 0.24 * Math.sin((x + z) * 0.0015 + 3.1) * Math.sin((x - z) * 0.0017);
 }
 
+// Forest concentrates around the settlement (the core of the action) and thins
+// toward the map edges, so the far valley reads as open terrain showing the
+// detailed relief rather than a wall of trees. Full density out to CORE_R, fading
+// to a sparse EDGE_FLOOR by EDGE_R (distance measured from the starting hamlet).
+const CORE_R = 1100, EDGE_R = 3000, EDGE_FLOOR = 0.06;
+function coreFalloff(x: number, z: number): number {
+  const d = Math.hypot(x - START.camp.x, z - START.camp.z);
+  const t = Math.min(1, Math.max(0, (d - CORE_R) / (EDGE_R - CORE_R)));
+  const s = t * t * (3 - 2 * t); // smoothstep
+  return 1 - s * (1 - EDGE_FLOOR);
+}
+
 // ---- trees, rocks, berry bushes: instanced meshes + resource nodes ----
 function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
   const rng = mulberry32(1883);
@@ -220,6 +266,10 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
     return { x: w.x, z: w.z, r: c.r };
   });
   clearings.push({ x: START.camp.x, z: START.camp.z, r: 100 }); // the hamlet's meadow
+  clearingPolys = CLEARING_POLYS.map((p) => p.ring.map(([lat, lon]) => {
+    const w = lonLatToWorld(lon, lat);
+    return { x: w.x, z: w.z };
+  }));
 
   const clearOf = (x: number, z: number, margin: number): boolean => {
     for (const p of PLOTS) {
@@ -264,7 +314,8 @@ function scatterNature(scene: THREE.Scene): THREE.InstancedMesh[] {
           // explicit clearings/river/pasture (via forestedAt below) are true meadows
           const nearCamp = (x - START.camp.x) ** 2 + (z - START.camp.z) ** 2 < 520 * 520;
           if (!nearCamp) {
-            const density = Math.max(0.45, Math.min(1, 0.7 + 1.0 * (forestClump(x, z) - 0.5)));
+            // clump variation × distance-from-core falloff (thin toward the edges)
+            const density = Math.max(0.45, Math.min(1, 0.7 + 1.0 * (forestClump(x, z) - 0.5))) * coreFalloff(x, z);
             if (crng() > density) continue;
           }
           const h = terrainHeight(x, z);

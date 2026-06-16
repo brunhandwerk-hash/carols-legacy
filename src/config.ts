@@ -28,6 +28,7 @@ export const START = {
   wood: 160,
   stone: 0,
   food: 120, // a cushion now that food buildings need assigned workers
+  water: 100, // a cushion to dig a well (Fântână) before the town goes thirsty
   coin: 0,
   villagers: 4,
   // hamlet position is set from CAMP_GEO (plots.ts) once the DEM is loaded

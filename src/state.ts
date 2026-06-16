@@ -3,11 +3,13 @@ import type { Villager } from './units';
 import type { Building } from './buildings';
 import type { Bear } from './wildlife';
 
-export type ResKind = 'wood' | 'planks' | 'stone' | 'block' | 'food' | 'coin';
+export type ResKind = 'wood' | 'planks' | 'stone' | 'block' | 'lime' | 'nails' | 'food' | 'water' | 'coin';
 
 // canonical order — drives HUD, affordability checks, cost rendering.
-// Refined goods (planks, block) sit next to their raw source.
-export const RES_KINDS: ResKind[] = ['wood', 'planks', 'stone', 'block', 'food', 'coin'];
+// Refined goods (planks, block, lime, nails) sit next to their raw source; water by
+// food (both per-capita survival needs). lime (burnt limestone mortar) and nails
+// (forged ironwork) are the industrial goods that gate the grand royal landmarks.
+export const RES_KINDS: ResKind[] = ['wood', 'planks', 'stone', 'block', 'lime', 'nails', 'food', 'water', 'coin'];
 
 // kinds a villager can physically gather from a node (planks/block are refined
 // at workshops; coin is building-generated)
@@ -42,7 +44,7 @@ export interface GameState {
 }
 
 export const G: GameState = {
-  resources: { wood: 0, planks: 0, stone: 0, block: 0, food: 0, coin: 0 },
+  resources: { wood: 0, planks: 0, stone: 0, block: 0, lime: 0, nails: 0, food: 0, water: 0, coin: 0 },
   popCap: 0,
   eraIndex: 0,
   year: 1690,

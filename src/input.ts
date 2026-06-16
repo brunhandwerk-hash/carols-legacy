@@ -3,9 +3,10 @@ import { MAP, START } from './config';
 import { terrainHeight, terrainSlope, inMap, riverX } from './terrain';
 import { G, canAfford, pay } from './state';
 import { Building, DEFS } from './buildings';
+import { PLOTS } from './plots';
 import { loadModel, fitModel } from './models';
 import type { Villager } from './units';
-import { nearestHarvestable, hideNode, WorldRefs } from './world';
+import { nearestHarvestable, WorldRefs } from './world';
 import { setSelection, refreshSelectionPanel, setGhostRequest, toast, showNodeTip, hideNodeTip } from './ui';
 
 // a finished crossing (timber or stone) unlocks the far bank for building
@@ -120,12 +121,42 @@ export function initInput(
     if (ghost) { world.scene.remove(ghost.mesh); ghost = null; }
   }
 
+  // landmarks have a fixed historical plot (src/plots.ts) — placement is only
+  // valid on that site. Returns the resolved plot for a key, or null if it's a
+  // free-placement building.
+  function landmarkPlot(key: string): { x: number; z: number; r: number } | null {
+    return PLOTS.find((p) => p.key === key) ?? null;
+  }
+
+  // a rock outcrop overlapping the footprint blocks placement (mine it first)
+  const ROCK_CLEAR = 4; // a boulder's effective radius
+  function rockInFootprint(x: number, z: number, radius: number): boolean {
+    const rr = radius + ROCK_CLEAR;
+    for (const n of G.nodes) {
+      if (n.alive && n.kind === 'stone' && (n.x - x) ** 2 + (n.z - z) ** 2 < rr * rr) return true;
+    }
+    return false;
+  }
+
   function updateGhost(): void {
     if (!ghost) return;
     const p = groundPoint(pointerX, pointerY);
     if (!p) return;
-    ghost.mesh.position.set(p.x, terrainHeight(p.x, p.z), p.z);
     const def = DEFS[ghost.key];
+    // Landmarks may only be raised on their fixed historical plot. The player still
+    // places it themselves, but the preview snaps onto the site (and turns valid)
+    // only when the cursor is over it — elsewhere it's red and can't be dropped.
+    const plot = landmarkPlot(ghost.key);
+    if (plot) {
+      const near = (p.x - plot.x) ** 2 + (p.z - plot.z) ** 2 < plot.r * plot.r;
+      const gx = near ? plot.x : p.x, gz = near ? plot.z : p.z;
+      ghost.mesh.position.set(gx, terrainHeight(gx, gz), gz);
+      ghost.valid = near;
+      const m = near ? okMat : badMat;
+      ghost.mesh.traverse((o) => { if (o instanceof THREE.Mesh) o.material = m; });
+      return;
+    }
+    ghost.mesh.position.set(p.x, terrainHeight(p.x, p.z), p.z);
     // buildings terrace their own ground (see Building.addFoundation), so they can
     // sit on fairly steep slopes — only true cliffs and the river are off-limits.
     const riverDist = Math.abs(p.x - riverX(p.z));
@@ -152,6 +183,8 @@ export function initInput(
         if (d2 < (b.def.radius + def.radius + 1) ** 2) { valid = false; break; }
       }
     }
+    // rocks block building — they're cleared by mining, never bulldozed by a plot
+    if (valid && rockInFootprint(p.x, p.z, def.radius)) valid = false;
     ghost.valid = valid;
     const mat = valid ? okMat : badMat;
     ghost.mesh.traverse((o) => { if (o instanceof THREE.Mesh) o.material = mat; });
@@ -162,12 +195,15 @@ export function initInput(
       if (ghost) {
         const p = groundPoint(pointerX, pointerY);
         const def = DEFS[ghost.key];
+        if (landmarkPlot(ghost.key)) { toast(`The ${def.name} can only be raised on its historical site.`); return; }
         const riverDist = p ? Math.abs(p.x - riverX(p.z)) : Infinity;
         const farBank = p && !def.noFoundation && !bridgeBuilt() &&
           Math.sign(p.x - riverX(p.z)) !== Math.sign(START.camp.x - riverX(START.camp.z));
         const needsWater = def.needsWater && riverDist >= def.radius + WATER_BUFFER;
         const tooCloseToWater = !def.noFoundation && !def.needsWater && riverDist <= def.radius + WATER_BUFFER;
-        toast(needsWater ? `The ${def.name} must be built at the water’s edge.`
+        const onRock = p && rockInFootprint(p.x, p.z, def.radius);
+        toast(onRock ? 'Rock in the way — mine it out before building here.'
+          : needsWater ? `The ${def.name} must be built at the water’s edge.`
           : tooCloseToWater ? 'Too close to the water — keep the riverbank clear.'
           : farBank ? 'Bridge the Prahova to build on the far bank.' : 'Cannot build here.');
       }
@@ -176,12 +212,21 @@ export function initInput(
     const def = DEFS[ghost.key];
     if (!canAfford(def.cost)) { toast('Not enough resources.'); cancelGhost(); return; }
     pay(def.cost);
-    const { x, z } = { x: ghost.mesh.position.x, z: ghost.mesh.position.z };
-    // clear trees/bushes under the footprint
-    for (const n of G.nodes) {
-      if (!n.alive) continue;
-      if ((n.x - x) ** 2 + (n.z - z) ** 2 < (def.radius + 2) ** 2) { n.alive = false; hideNode(n); }
+    // landmark: activate its planned signpost on the fixed plot (or create the site
+    // there) — it always sits on its historical location, not the exact cursor spot
+    const plot = landmarkPlot(ghost.key);
+    if (plot) {
+      const sign = G.buildings.find((b) => b.plotKey === ghost!.key && b.phase === 'planned');
+      const b = sign ?? new Building(ghost.key, plot.x, plot.z, 'site', world.scene);
+      if (sign) sign.startConstruction();
+      for (const v of G.selected) v.orderBuild(b);
+      cancelGhost();
+      refreshSelectionPanel();
+      return;
     }
+    const { x, z } = { x: ghost.mesh.position.x, z: ghost.mesh.position.z };
+    // (the forest under the plot is cleared in Building.addFoundation, which runs
+    // for every building — placed, landmark, or the camp — over the levelled area)
     // most buildings get a random yaw; a bridge auto-orients to span the river
     let rotY = Math.random() * Math.PI * 2;
     if (ghost.key === 'bridge') {
@@ -252,13 +297,18 @@ export function initInput(
         clampTarget();
       }
     }
-    updateHoverTip(e.clientX, e.clientY);
+    updateHoverTip(e.clientX, e.clientY, e.target);
   });
 
   // ---- resource hover tooltip ----
   const NODE_LABEL = { wood: 'Timber', stone: 'Stone', food: 'Berries' };
-  function updateHoverTip(cx: number, cy: number): void {
+  function updateHoverTip(cx: number, cy: number, target: EventTarget | null): void {
     if (orbit || dragStart || rDragStart || ghost) { hideNodeTip(); return; }
+    // don't surface the world tooltip when the pointer is over a UI panel
+    // (build menu, selection panel) — otherwise a node "120 Timber left"
+    // bleeds through from underneath the menu the user is reading. The pointer
+    // only addresses the 3D world when its event target is the game canvas.
+    if (target !== canvas) { hideNodeTip(); return; }
     const p = groundPoint(cx, cy);
     const node = p ? nearestHarvestable(p.x, p.z, 6) : null;
     if (!node) { hideNodeTip(); return; }
