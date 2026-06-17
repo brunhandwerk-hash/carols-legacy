@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MAP, PALETTE } from './config';
-import { cobbleMaterial, waterMaterial, terrainGroundMaterial, terrainGoldStippleMaterial } from './materials';
+import { cobbleMaterial, waterMaterial, terrainGroundMaterial } from './materials';
 import { G } from './state';
 
 // ---- real-world digital elevation model (public/dem.bin, see scripts/fetch-dem.mjs) ----
@@ -576,11 +576,9 @@ export function buildTerrainMesh(): THREE.Mesh {
     nrm[i * 3] = nxv * inv; nrm[i * 3 + 1] = inv; nrm[i * 3 + 2] = nzv * inv;
   }
   geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-  // golden DEM-relief look: matte gold sculpted relief + a zoom-stable gold dot
-  // stipple (mimics the dev Flat-shade + Base-DEM composite). The baked
-  // aSplat/aRiver/color attributes go unused here but stay on the geometry (cheap,
-  // and the dev Flat-shade / Base-DEM lenses still rely on the same mesh).
-  const mat = terrainGoldStippleMaterial();
+  // image-based PBR ground: real grass/forest/dirt/rock textures splat-blended by
+  // the aSplat weights, with the vertex colours surviving as a light tint.
+  const mat = terrainGroundMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.name = 'terrain';
