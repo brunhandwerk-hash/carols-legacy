@@ -434,12 +434,15 @@
 
       <div class="dev-section">
         <h4>Terrain Debug</h4>
+        <!-- ordered top→bottom = the real render stack, topmost layer first:
+             objects → texture → terrain → (flat) → mesh → base DEM -->
         <div id="dev-terrain-dbg">
-          <button id="dev-terrain" class="dev-tbtn on" title="Show/hide the playable terrain mesh (trees/buildings stay)">⛰ Terrain</button>
-          <button id="dev-wireframe" class="dev-tbtn" title="Show the terrain mesh triangulation">△ Wireframe</button>
-          <button id="dev-flat" class="dev-tbtn" title="Untextured flat material — see pure geometry shading">◑ Flat shade</button>
+          <button id="dev-objects" class="dev-tbtn on" title="Show/hide everything sitting on the ground — trees, rocks, buildings, villagers, wildlife">🌲 Objects</button>
           <button id="dev-tex" class="dev-tbtn on" title="Toggle the ground texture detail on/off (keeps biome colours)">🖼 Texture</button>
-          <button id="dev-dempts" class="dev-tbtn" title="Raw DEM samples as a point cloud (the source data, pre-interpolation)">⠿ DEM points</button>
+          <button id="dev-terrain" class="dev-tbtn on" title="Show/hide the rendered terrain surface (objects stay)">⛰ Terrain</button>
+          <button id="dev-flat" class="dev-tbtn" title="Untextured flat material — see pure geometry shading">◑ Flat shade</button>
+          <button id="dev-wireframe" class="dev-tbtn" title="Show the terrain mesh triangulation (the geometry built from the DEM)">△ Mesh</button>
+          <button id="dev-dempts" class="dev-tbtn" title="Raw DEM samples as a point cloud (the source data, pre-interpolation)">⠿ Base DEM</button>
         </div>
       </div>
 

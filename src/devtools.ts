@@ -144,6 +144,9 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   }
   const v = new THREE.Vector3();
   function update(): void {
+    // the forest reveal re-shows tree chunks every frame; while objects are
+    // hidden, keep re-asserting it (this runs after the reveal in the loop)
+    if (!objectsOn) setObjects(false);
     const r = canvas.getBoundingClientRect();
     for (const n of notes) {
       const el = labelEls.get(n.id);
@@ -413,6 +416,24 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
   let texOn = true;
   texBtn?.addEventListener('click', () => {
     texOn = !texOn; setGroundTexture(texOn); texBtn.classList.toggle('on', texOn);
+  });
+
+  // ---- objects layer: everything sitting ON the terrain ----
+  // Trees, rocks, bushes (instanced), buildings, villagers and wildlife are all
+  // direct children of the scene, tagged by type. We toggle their `.visible`
+  // rather than camera layers so picking/raycasting is unaffected. The forest
+  // reveal sets tree visibility every frame, so while objects are hidden we
+  // re-assert it from update() (which runs after the reveal each frame).
+  const objBtn = document.getElementById('dev-objects') as HTMLButtonElement;
+  let objectsOn = true;
+  const isObjectChild = (o: THREE.Object3D): boolean =>
+    o instanceof THREE.InstancedMesh ||
+    !!(o.userData.building || o.userData.villager || o.userData.bear);
+  function setObjects(v: boolean): void {
+    for (const o of world.scene.children) if (isObjectChild(o)) o.visible = v;
+  }
+  objBtn?.addEventListener('click', () => {
+    objectsOn = !objectsOn; setObjects(objectsOn); objBtn.classList.toggle('on', objectsOn);
   });
 
   // ---- pointer interception (capture phase on window pre-empts input.ts) ----
