@@ -380,9 +380,10 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     const t = terrainMesh(), bk = findMesh('backdrop');
     if (t && !origTerrainMat) origTerrainMat = t.material as THREE.Material;
     if (bk && !origBackdropMat) origBackdropMat = bk.material as THREE.Material;
-    // plain matte material: keeps the mesh's (analytic) normals, drops all texture
-    // so Flat shade shows pure geometry shading
-    if (!flatMat) flatMat = new THREE.MeshStandardMaterial({ color: 0x5f7d44, roughness: 1, metalness: 0 });
+    // single matte material: keeps the mesh's (analytic) normals, drops all texture
+    // so Flat shade shows pure geometry shading. A semi-metallic gold catches the
+    // env map so ridgelines and valleys read as a sculpted golden relief.
+    if (!flatMat) flatMat = new THREE.MeshStandardMaterial({ color: 0xd6a23e, roughness: 0.5, metalness: 0.85 });
     // ONE shared wireframe material for terrain + backdrop, so both wireframes look
     // identical — plain black, unlit, fog off (distance doesn't tint it)
     if (!wireMat) wireMat = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, fog: false, toneMapped: false });
@@ -395,7 +396,7 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     ensureDebugMats();
     const t = terrainMesh(), bk = findMesh('backdrop');
     if (t) { t.visible = terrainOn; t.material = wireOn ? wireMat! : flatOn ? flatMat! : origTerrainMat!; }
-    if (bk) bk.material = wireOn ? wireMat! : origBackdropMat!;
+    if (bk) bk.material = wireOn ? wireMat! : flatOn ? flatMat! : origBackdropMat!;
   }
   const terrBtn = document.getElementById('dev-terrain') as HTMLButtonElement;
   terrBtn?.addEventListener('click', () => {
