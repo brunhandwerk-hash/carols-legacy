@@ -381,9 +381,9 @@ export function initDevtools(canvas: HTMLCanvasElement, camera: THREE.Perspectiv
     if (t && !origTerrainMat) origTerrainMat = t.material as THREE.Material;
     if (bk && !origBackdropMat) origBackdropMat = bk.material as THREE.Material;
     // single matte material: keeps the mesh's (analytic) normals, drops all texture
-    // so Flat shade shows pure geometry shading. A semi-metallic gold catches the
-    // env map so ridgelines and valleys read as a sculpted golden relief.
-    if (!flatMat) flatMat = new THREE.MeshStandardMaterial({ color: 0xd6a23e, roughness: 0.5, metalness: 0.85 });
+    // so Flat shade shows pure geometry shading. A matte gold (no metalness) so
+    // ridgelines and valleys read as a sculpted golden relief without any shine.
+    if (!flatMat) flatMat = new THREE.MeshStandardMaterial({ color: 0xd6a23e, roughness: 1, metalness: 0 });
     // ONE shared wireframe material for terrain + backdrop, so both wireframes look
     // identical — plain black, unlit, fog off (distance doesn't tint it)
     if (!wireMat) wireMat = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, fog: false, toneMapped: false });
