@@ -448,3 +448,65 @@ export function terrainGroundMaterial(): THREE.MeshStandardMaterial {
   groundMat = m;
   return m;
 }
+
+// ---- golden DEM-relief terrain (matte gold + zoom-stable dot stipple) -------
+// Art direction that mimics the dev "Flat shade + Base DEM" composite: a matte
+// gold sculpted relief speckled with brighter gold dots. The dots are drawn
+// per-pixel in the fragment shader with a lattice whose cell size is driven by
+// the on-screen size of a world unit (fwidth), so the grain stays the SAME
+// density at every zoom level — zoom in and it never thins or pops (unlike a
+// fixed-world point cloud). Two adjacent power-of-two lattices cross-fade to
+// keep the transition smooth. Built on MeshStandardMaterial so the gold relief
+// still gets sun + HDRI env + fog + ACES (the sculpted self-shading).
+let goldStippleMat: THREE.MeshStandardMaterial | null = null;
+export function terrainGoldStippleMaterial(): THREE.MeshStandardMaterial {
+  if (goldStippleMat) return goldStippleMat;
+  // tunables (linear-space golds; relief = 0xd6a23e, dots = 0xffd27a)
+  const reliefGold = new THREE.Color(0xd6a23e).convertSRGBToLinear();
+  const dotGold = new THREE.Color(0xffd27a).convertSRGBToLinear();
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uReliefGold = { value: new THREE.Vector3(reliefGold.r, reliefGold.g, reliefGold.b) };
+    sh.uniforms.uDotGold = { value: new THREE.Vector3(dotGold.r, dotGold.g, dotGold.b) };
+    sh.uniforms.uDotPx = { value: 9.0 };  // target pixels between dot centres
+    sh.uniforms.uDotR = { value: 0.30 };  // dot radius as a fraction of the cell
+
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nvec4 _wp = modelMatrix * vec4(transformed, 1.0);\nvWPos = _wp.xyz;');
+
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\nuniform vec3 uReliefGold;\nuniform vec3 uDotGold;\nuniform float uDotPx;\nuniform float uDotR;\nvarying vec3 vWPos;\n' +
+        // Dot coverage for one square lattice of `cell` world-metres. Phase is
+        // anchored to world XZ so dots stay attached to the ground while panning.
+        // Edge is anti-aliased in cell space via fwidth so dots never alias.
+        'float dotLayer(vec2 p, float cell){\n' +
+        '  vec2 g = p / cell;\n' +
+        '  vec2 f = fract(g) - 0.5;\n' +
+        '  float d = length(f);\n' +
+        '  float aa = max(fwidth(d), 1e-4);\n' +
+        '  return 1.0 - smoothstep(uDotR - aa, uDotR + aa, d);\n' +
+        '}\n' +
+        // Constant ON-SCREEN dot density: pick the cell size that puts ~uDotPx
+        // pixels between dots, snap to the two nearest power-of-two lattices and
+        // cross-fade — so zooming changes which lattice is shown, not the grain.
+        'float stipple(vec2 p){\n' +
+        '  float upp = max(fwidth(p.x), fwidth(p.y));\n' +   // world metres per pixel
+        '  float target = upp * uDotPx;\n' +                 // desired cell size in metres
+        '  float lod = log2(max(target, 1e-4));\n' +
+        '  float lo = floor(lod);\n' +
+        '  float fade = lod - lo;\n' +
+        '  float cLo = exp2(lo), cHi = exp2(lo + 1.0);\n' +
+        '  return mix(dotLayer(p, cLo), dotLayer(p, cHi), fade);\n' +
+        '}')
+      .replace('#include <map_fragment>', `
+        #include <map_fragment>
+        float dots = stipple(vWPos.xz);
+        diffuseColor.rgb = mix(uReliefGold, uDotGold, dots);
+      `);
+  };
+  goldStippleMat = m;
+  return m;
+}
